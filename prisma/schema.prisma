@@ -1,0 +1,228 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// 1. ENUM TIPLARI (Rollar va O'lchov birliklari)
+// ==========================================
+
+enum Role {
+  SUPER_ADMIN
+  OWNER
+  MANAGER
+  CASHIER
+  WAITER
+  KITCHEN
+}
+
+enum Unit {
+  PIECE // dona (Cola, Lavash)
+  KG    // kilogamm (Kartoshka, Go'sht)
+  GRAM  // gramm (Portsiya kartoshka fri - 200g)
+  LITER // litr (Yog', Sharbat)
+  ML    // millilitr (200ml sous)
+}
+
+// ==========================================
+// 2. TENANCY & USERS (Abonentlar va Foydalanuvchilar)
+// ==========================================
+
+model Tenant {
+  id        Int      @id @default(autoincrement())
+  name      String   @map("name")
+  logoUrl   String?  @map("logo_url")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  branches Branch[]
+
+  @@map("tenants")
+}
+
+model Branch {
+  id        Int      @id @default(autoincrement())
+  tenantId  Int      @map("tenant_id")
+  name      String   @map("name")
+  address   String?  @map("address")
+  phone     String?  @map("phone")
+  taxId     String?  @map("tax_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  users      User[]
+  halls      Hall[]
+  categories Category[]
+  stopLists  StopList[]
+  orders     Order[]
+
+  @@map("branches")
+}
+
+model User {
+  id       Int     @id @default(autoincrement())
+  branchId Int?    @map("branch_id")
+  name     String   @map("name")
+  phone    String?  @map("phone")
+  email    String?  @map("email")
+  password String?  @map("password") // Owner/Manager/SuperAdmin uchun
+  pinCode  String?  @map("pin_code") // Waiter/Cashier uchun 4 xonali PIN
+  role     Role    @default(WAITER)
+
+  branch Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  orders Order[]
+
+  @@map("users")
+}
+
+// ==========================================
+// 3. HALLS & TABLES (Zallar va Stollar)
+// ==========================================
+
+model Hall {
+  id       Int    @id @default(autoincrement())
+  branchId Int    @map("branch_id")
+  name     String   @map("name")
+
+  branch Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  tables Table[]
+
+  @@map("halls")
+}
+
+model Table {
+  id          Int    @id @default(autoincrement())
+  hallId      Int    @map("hall_id")
+  tableNumber String @map("table_number")
+  qrCodeToken String @unique @map("qr_code_token")
+  status      String @default("free") // free, occupied, reserved
+
+  hall   Hall    @relation(fields: [hallId], references: [id], onDelete: Cascade)
+  orders Order[]
+
+  @@map("tables")
+}
+
+// ==========================================
+// 4. MENU & PRODUCTS (Menyu va Mahsulotlar)
+// ==========================================
+
+model Category {
+  id        Int    @id @default(autoincrement())
+  branchId  Int    @map("branch_id")
+  name      String   @map("name")
+  sortOrder Int    @default(0) @map("sort_order")
+
+  branch   Branch    @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id          Int     @id @default(autoincrement())
+  categoryId  Int     @map("category_id")
+  name        String   @map("name")
+  description String?  @map("description")
+  price       Decimal @db.Decimal(10, 2)
+  
+  // O'lchov birligi va hajmi
+  unit        Unit    @default(PIECE)
+  unitValue   Decimal @default(1.00) @map("unit_value") @db.Decimal(8, 2)
+
+  imageUrl    String? @map("image_url")
+  isActive    Boolean @default(true) @map("is_active")
+
+  category   Category    @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  stopLists  StopList[]
+  orderItems OrderItem[]
+
+  @@map("products")
+}
+
+model StopList {
+  id          Int     @id @default(autoincrement())
+  branchId    Int     @map("branch_id")
+  productId   Int     @map("product_id")
+  isAvailable Boolean @default(false) @map("is_available")
+
+  branch  Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("stop_lists")
+}
+
+// ==========================================
+// 5. ORDERS & ITEMS (Buyurtmalar)
+// ==========================================
+
+model Order {
+  id          BigInt   @id @default(autoincrement())
+  branchId    Int      @map("branch_id")
+  tableId     Int      @map("table_id")
+  waiterId    Int?     @map("waiter_id")
+  source      String   // pos_waiter, qr_customer
+  status      String   @default("new") // new, cooking, served, paid, canceled
+  totalAmount Decimal  @default(0.00) @map("total_amount") @db.Decimal(12, 2)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  branch     Branch      @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  table      Table       @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  waiter     User?       @relation(fields: [waiterId], references: [id], onDelete: SetNull)
+  orderItems OrderItem[]
+  payments   Payment[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id        BigInt  @id @default(autoincrement())
+  orderId   BigInt  @map("order_id")
+  productId Int     @map("product_id")
+  
+  // Tortiladigan taomlar (masalan: 1.5 kg) uchun Decimal ga o'tkazildi
+  quantity  Decimal @default(1.00) @db.Decimal(8, 2)
+  price     Decimal @db.Decimal(10, 2)
+  notes     String?
+  status    String  @default("pending") // pending, cooking, ready
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("order_items")
+}
+
+// ==========================================
+// 6. PAYMENTS & FISCAL (To'lovlar va Fiskallashtirish)
+// ==========================================
+
+model Payment {
+  id              BigInt   @id @default(autoincrement())
+  orderId         BigInt   @map("order_id")
+  provider        String   // click, payme, cash, card
+  amount          Decimal  @db.Decimal(12, 2)
+  tipAmount       Decimal  @default(0.00) @map("tip_amount") @db.Decimal(10, 2)
+  status          String   @default("pending") // pending, completed, failed
+  externalTransId String?  @map("external_trans_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  order          Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fiscalReceipts FiscalReceipt[]
+
+  @@map("payments")
+}
+
+model FiscalReceipt {
+  id           BigInt   @id @default(autoincrement())
+  paymentId    BigInt   @map("payment_id")
+  fiscalSign   String?  @map("fiscal_sign")
+  fiscalSqrUrl String?  @map("fiscal_sqr_url")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@map("fiscal_receipts")
+}
