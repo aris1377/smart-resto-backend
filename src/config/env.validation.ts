@@ -7,6 +7,12 @@ export const envValidationSchema = Joi.object({
 
   PORT: Joi.number().port().default(3000),
 
+  CORS_ORIGINS: Joi.string().when('NODE_ENV', {
+    is: 'production',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
+
   DATABASE_URL: Joi.string()
     .uri({ scheme: ['postgresql', 'postgres'] })
     .required(),
