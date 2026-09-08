@@ -22,10 +22,10 @@ enum Role {
 
 enum Unit {
   PIECE // dona (Cola, Lavash)
-  KG    // kilogamm (Kartoshka, Go'sht)
-  GRAM  // gramm (Portsiya kartoshka fri - 200g)
+  KG // kilogamm (Kartoshka, Go'sht)
+  GRAM // gramm (Portsiya kartoshka fri - 200g)
   LITER // litr (Yog', Sharbat)
-  ML    // millilitr (200ml sous)
+  ML // millilitr (200ml sous)
 }
 
 // ==========================================
@@ -65,11 +65,11 @@ model Branch {
 model User {
   id       Int     @id @default(autoincrement())
   branchId Int?    @map("branch_id")
-  name     String   @map("name")
-  phone    String?  @map("phone")
-  email    String?  @map("email")
-  password String?  @map("password") // Owner/Manager/SuperAdmin uchun
-  pinCode  String?  @map("pin_code") // Waiter/Cashier uchun 4 xonali PIN
+  name     String  @map("name")
+  phone    String? @map("phone")
+  email    String? @map("email")
+  password String? @map("password") // Owner/Manager/SuperAdmin uchun
+  pinCode  String? @map("pin_code") // Waiter/Cashier uchun 4 xonali PIN
   role     Role    @default(WAITER)
 
   branch Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
@@ -85,7 +85,7 @@ model User {
 model Hall {
   id       Int    @id @default(autoincrement())
   branchId Int    @map("branch_id")
-  name     String   @map("name")
+  name     String @map("name")
 
   branch Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
   tables Table[]
@@ -113,7 +113,7 @@ model Table {
 model Category {
   id        Int    @id @default(autoincrement())
   branchId  Int    @map("branch_id")
-  name      String   @map("name")
+  name      String @map("name")
   sortOrder Int    @default(0) @map("sort_order")
 
   branch   Branch    @relation(fields: [branchId], references: [id], onDelete: Cascade)
@@ -125,16 +125,16 @@ model Category {
 model Product {
   id          Int     @id @default(autoincrement())
   categoryId  Int     @map("category_id")
-  name        String   @map("name")
-  description String?  @map("description")
+  name        String  @map("name")
+  description String? @map("description")
   price       Decimal @db.Decimal(10, 2)
-  
-  // O'lchov birligi va hajmi
-  unit        Unit    @default(PIECE)
-  unitValue   Decimal @default(1.00) @map("unit_value") @db.Decimal(8, 2)
 
-  imageUrl    String? @map("image_url")
-  isActive    Boolean @default(true) @map("is_active")
+  // O'lchov birligi va hajmi
+  unit      Unit    @default(PIECE)
+  unitValue Decimal @default(1.00) @map("unit_value") @db.Decimal(8, 2)
+
+  imageUrl String? @map("image_url")
+  isActive Boolean @default(true) @map("is_active")
 
   category   Category    @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   stopLists  StopList[]
@@ -160,11 +160,11 @@ model StopList {
 // ==========================================
 
 model Order {
-  id          BigInt   @id @default(autoincrement())
+  id          Int      @id @default(autoincrement())
   branchId    Int      @map("branch_id")
   tableId     Int      @map("table_id")
   waiterId    Int?     @map("waiter_id")
-  source      String   // pos_waiter, qr_customer
+  source      String // pos_waiter, qr_customer
   status      String   @default("new") // new, cooking, served, paid, canceled
   totalAmount Decimal  @default(0.00) @map("total_amount") @db.Decimal(12, 2)
   createdAt   DateTime @default(now()) @map("created_at")
@@ -179,15 +179,15 @@ model Order {
 }
 
 model OrderItem {
-  id        BigInt  @id @default(autoincrement())
-  orderId   BigInt  @map("order_id")
-  productId Int     @map("product_id")
-  
+  id        Int @id @default(autoincrement())
+  orderId   Int @map("order_id")
+  productId Int @map("product_id")
+
   // Tortiladigan taomlar (masalan: 1.5 kg) uchun Decimal ga o'tkazildi
-  quantity  Decimal @default(1.00) @db.Decimal(8, 2)
-  price     Decimal @db.Decimal(10, 2)
-  notes     String?
-  status    String  @default("pending") // pending, cooking, ready
+  quantity Decimal @default(1.00) @db.Decimal(8, 2)
+  price    Decimal @db.Decimal(10, 2)
+  notes    String?
+  status   String  @default("pending") // pending, cooking, ready
 
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
@@ -200,9 +200,9 @@ model OrderItem {
 // ==========================================
 
 model Payment {
-  id              BigInt   @id @default(autoincrement())
-  orderId         BigInt   @map("order_id")
-  provider        String   // click, payme, cash, card
+  id              Int      @id @default(autoincrement())
+  orderId         Int      @map("order_id")
+  provider        String // click, payme, cash, card
   amount          Decimal  @db.Decimal(12, 2)
   tipAmount       Decimal  @default(0.00) @map("tip_amount") @db.Decimal(10, 2)
   status          String   @default("pending") // pending, completed, failed
@@ -216,8 +216,8 @@ model Payment {
 }
 
 model FiscalReceipt {
-  id           BigInt   @id @default(autoincrement())
-  paymentId    BigInt   @map("payment_id")
+  id           Int      @id @default(autoincrement())
+  paymentId    Int      @map("payment_id")
   fiscalSign   String?  @map("fiscal_sign")
   fiscalSqrUrl String?  @map("fiscal_sqr_url")
   createdAt    DateTime @default(now()) @map("created_at")
