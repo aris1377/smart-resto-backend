@@ -30,4 +30,7 @@ async function bootstrap() {
 
   logger.log(`🚀 connected: http://localhost:${port}`);
 }
-bootstrap();
+bootstrap().catch((error) => {
+  new Logger('Bootstrap').error('❌', error);
+  process.exit(1);
+});

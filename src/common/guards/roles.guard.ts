@@ -5,36 +5,37 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { Request } from 'express';
+import { Role } from '@prisma/client';
 import { ROLES_KEY } from '../decorators/roles.decorator';
+import { AuthUser } from '../interfaces/auth-user.interface';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
-  constructor(private reflector: Reflector) {}
+  constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    // Controller yoki Metodga qo'yilgan @Roles(...) dekoratorini o'qiymiz
-    const requiredRoles = this.reflector.getAllAndOverride<string[]>(
-      ROLES_KEY,
-      [context.getHandler(), context.getClass()],
-    );
+    const requiredRoles = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
 
-    // Agar endpointga hech qanday rol cheklovi qo'yilmagan bo'lsa, o'tkazib yuboramiz
     if (!requiredRoles || requiredRoles.length === 0) {
       return true;
     }
 
-    const { user } = context.switchToHttp().getRequest();
+    const request = context
+      .switchToHttp()
+      .getRequest<Request & { user?: AuthUser }>();
+    const user = request.user;
 
-    // Foydalanuvchi tizmga kirganini va roli borligini tekshiramiz
-    if (!user || !user.role) {
+    if (!user?.role) {
       throw new ForbiddenException(
         'Sizda ushbu resursdan foydalanish huquqi yoʻq.',
       );
     }
 
-    // Foydalanuvchi roli talab qilingan rollar ichida bormi?
-    const hasRole = requiredRoles.includes(user.role);
-    if (!hasRole) {
+    if (!requiredRoles.includes(user.role)) {
       throw new ForbiddenException(
         'Ushbu amallarni bajarish uchun sizning rolingiz yetarli emas.',
       );

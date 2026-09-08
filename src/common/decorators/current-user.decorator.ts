@@ -1,11 +1,13 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+import { Request } from 'express';
+import { AuthUser } from '../interfaces/auth-user.interface';
 
 export const CurrentUser = createParamDecorator(
-  (data: string | undefined, ctx: ExecutionContext) => {
-    const request = ctx.switchToHttp().getRequest();
-    const user = request.user;
+  (data: keyof AuthUser | undefined, ctx: ExecutionContext) => {
+    const request = ctx
+      .switchToHttp()
+      .getRequest<Request & { user?: AuthUser }>();
 
-    // Agar @CurrentUser('id') deb biron-bir maydon so'ralgan bo'lsa, faqat shuni qaytaradi
-    return data ? user?.[data] : user;
+    return data ? request.user?.[data] : request.user;
   },
 );
