@@ -7,6 +7,8 @@ import {
 import { Response as ExpressResponse } from 'express';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
+import { Reflector } from '@nestjs/core';
+import { BYPASS_TRANSFORM_KEY } from '../decorators/bypass-transform.decorator';
 
 export interface ApiResponse<T> {
   success: boolean;
@@ -32,12 +34,23 @@ function isWrapped(value: unknown): value is WrappedPayload {
 @Injectable()
 export class TransformInterceptor<T> implements NestInterceptor<
   T,
-  ApiResponse<T>
+  ApiResponse<T> | T
 > {
+  constructor(private readonly reflector: Reflector) {}
+
   intercept(
     context: ExecutionContext,
     next: CallHandler<T>,
-  ): Observable<ApiResponse<T>> {
+  ): Observable<ApiResponse<T> | T> {
+    const bypass = this.reflector.getAllAndOverride<boolean>(
+      BYPASS_TRANSFORM_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+
+    if (bypass) {
+      return next.handle();
+    }
+
     const { statusCode } = context
       .switchToHttp()
       .getResponse<ExpressResponse>();
