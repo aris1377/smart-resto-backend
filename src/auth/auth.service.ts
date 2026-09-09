@@ -7,13 +7,14 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Prisma, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { AuthTokens, AuthUser, JwtPayload } from '../common/interfaces';
+import { AuthUser } from '../common/interfaces';
+import { AuthTokens, JwtPayload } from './interfaces';
 import { HashService } from './hash.service';
 import { LoginDto, LoginPinDto, RefreshTokenDto } from './dto';
 
 const MS_IN_DAY = 24 * 60 * 60 * 1000;
 
-// Planshetdagi xodimlar roʻyxati ochiq endpointdan qaytadi — ortiqcha maydon chiq
+// Planshetdagi xodimlar roʻyxati ochiq endpointdan qaytadi — ortiqcha maydon chiqmasin
 const STAFF_SELECT = {
   id: true,
   name: true,

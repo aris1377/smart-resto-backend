@@ -4,6 +4,7 @@ import { JwtModule, JwtSignOptions } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { JwtStrategy } from 'src/auth/strategies/jwt.strategy';
 import { HashService } from './hash.service';
+import { AuthService } from './auth.service';
 
 @Module({
   imports: [
@@ -20,7 +21,7 @@ import { HashService } from './hash.service';
       }),
     }),
   ],
-  providers: [JwtStrategy, HashService],
+  providers: [JwtStrategy, AuthService, HashService],
   exports: [HashService],
 })
 export class AuthModule {}
