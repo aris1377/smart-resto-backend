@@ -20,7 +20,9 @@ pnpm build            # nest build -> dist/
 pnpm start:prod       # node dist/main
 pnpm lint             # eslint --fix (type-checked qoidalar yoqilgan)
 pnpm format           # prettier --write
-pnpm test             # jest (hozircha testlar yo'q)
+pnpm test             # jest (hozircha birorta .spec.ts yo'q)
+pnpm test -- src/auth/auth.service.spec.ts   # bitta fayl
+pnpm test -- -t "login"                      # nomi mos bitta test
 
 pnpm db:generate      # prisma generate
 pnpm db:migrate       # prisma migrate dev  -- nom bilan: --name <aniq_nom>
@@ -33,20 +35,35 @@ pnpm db:studio        # brauzerda baza ko'ruvchi
 > o'chirmang** — ular git'da saqlanadi va prodda ketma-ket qo'llanadi. Sxemani
 > o'zgartirish uchun `schema.prisma` ni tahrirlab, **yangi** migration yarating.
 
+Jest konfiguratsiyasi `package.json` ichida: `rootDir: "src"`, `testRegex:
+".*\\.spec\\.ts$"`. Ya'ni test fayllari **`src/` ichida, tekshirilayotgan
+faylning yonida** turadi (`test/` papkasi umuman yo'q). `pnpm test:e2e`
+`./test/jest-e2e.json` ni izlaydi — u fayl hali yaratilmagan, shuning uchun
+buyruq hozircha ishlamaydi.
+
 ## Arxitektura
 
 ```
 src/
-├── main.ts                  # bootstrap: global pipe, filter, interceptor, CORS
-├── app.module.ts            # ildiz modul
+├── main.ts                  # bootstrap: helmet, prefix+versioning, pipe, CORS, Swagger
+├── app.module.ts            # ildiz modul: ConfigModule, Throttler, Prisma, Auth
+├── config/env.validation.ts # .env uchun Joi sxemasi
 ├── prisma/                  # @Global() PrismaModule + PrismaService
-├── auth/strategies/         # jwt.strategy.ts
+├── auth/
+│   ├── strategies/          # jwt.strategy.ts
+│   └── src/auth/            # ⚠️ AuthModule + HashService (noto'g'ri chuqurlik)
 └── common/
-    ├── decorators/          # @CurrentUser(), @Roles()
+    ├── decorators/          # @Public(), @BypassTransform(), @Roles(), @CurrentUser()
     ├── guards/              # JwtAuthGuard, RolesGuard
     ├── filters/             # AllExceptionsFilter
-    └── interceptors/        # TransformInterceptor
+    ├── interceptors/        # TransformInterceptor
+    └── interfaces/          # AuthUser
 ```
+
+Global provayderlar `app.module.ts` da `APP_FILTER` / `APP_GUARD` / `APP_INTERCEPTOR`
+orqali ulanadi (`AllExceptionsFilter`, `ThrottlerGuard`, `TransformInterceptor`).
+`JwtAuthGuard` va `RolesGuard` hozircha **global emas** — har bir controllerda
+`@UseGuards(...)` yozish kerak.
 
 ### Global konventsiyalar
 
@@ -89,18 +106,27 @@ Sxema konventsiyalari (yangi model qo'shganda ham shunday davom eting):
   **snake_case** (masalan `branchId @map("branch_id")`, `@@map("branches")`).
 * Pul va miqdorlar — `Decimal` (`@db.Decimal(12,2)` summa, `(10,2)` narx, `(8,2)` miqdor).
   JS `number` ga aylantirmang, `Prisma.Decimal` bilan ishlang.
-* `Order`, `OrderItem`, `Payment`, `FiscalReceipt` id'lari — **BigInt**.
-  JSON'ga serializatsiya qilishdan oldin `String(id)` ga o'tkazish kerak.
+* Barcha modellarning id'lari — `Int @default(autoincrement())` (BigInt ishlatilmagan).
+* `User` — autentifikatsiya markazi: `password` (Owner/Manager/SuperAdmin uchun)
+  va `pinCode` (Waiter/Cashier/Kitchen uchun) ikkalasi ham **nullable**, ya'ni
+  rolga qarab bittasi to'ldiriladi. `tenantId`/`branchId` ham nullable
+  (SUPER_ADMIN hech qaysi tenantga bog'lanmaydi).
+* `RefreshToken` — faqat `tokenHash` (sha256, unique) saqlanadi, xom token emas.
+  Bekor qilish `revokedAt` ni to'ldirish orqali (qator o'chirilmaydi).
 * Ro'yxatga o'xshash maydonlar (`Order.status`, `Table.status`, `Payment.provider`)
   hozircha oddiy `String` — mumkin bo'lgan qiymatlar kod ichida kommentda ko'rsatilgan.
 * `Role` va `Unit` — Prisma enum.
 
 ## Muhit o'zgaruvchilari
 
-`.env.example` ga qarang: `PORT`, `NODE_ENV`, `DATABASE_URL`, `JWT_SECRET`,
-`ADMIN_API_KEY`, `REDIS_HOST`, `REDIS_PORT`.
+Yagona haqiqat manbai — `src/config/env.validation.ts` (Joi):
+`NODE_ENV`, `PORT`, `CORS_ORIGINS` (prodda **majburiy**), `DATABASE_URL`,
+`JWT_SECRET` (min 32 belgi), `JWT_EXPIRES_IN` (default `15m`),
+`REFRESH_TOKEN_EXPIRES_DAYS` (default 7), `ADMIN_API_KEY`, `REDIS_HOST`, `REDIS_PORT`.
 
-`.env` git'ga tushmaydi. Yangi o'zgaruvchi qo'shsangiz, `.env.example` ni ham yangilang.
+`.env` git'ga tushmaydi. Yangi o'zgaruvchi qo'shsangiz, Joi sxemasini **va**
+`.env.example` ni birga yangilang (`REFRESH_TOKEN_EXPIRES_DAYS` hozir
+`.env.example` da yo'q — sinxronlashtirish kerak).
 
 ## Kod uslubi
 
@@ -114,7 +140,7 @@ Sxema konventsiyalari (yangi model qo'shganda ham shunday davom eting):
 ## Loyihaning hozirgi holati
 
 To'liq reja: **`docs/ROADMAP.md`** (git'ga tushmaydi, `.gitignore` da).
-13 faza, ~7-9 hafta. **Faza 0 (poydevor) tugagan**, Faza 1 (Auth) navbatda.
+13 faza, ~7-9 hafta. **Faza 0 (poydevor) tugagan**, **Faza 1 (Auth) boshlangan**.
 
 ### Tayyor (Faza 0)
 
@@ -123,27 +149,39 @@ To'liq reja: **`docs/ROADMAP.md`** (git'ga tushmaydi, `.gitignore` da).
 * Kodda `process.env` **umuman yo'q** — hamma joyda `ConfigService`.
 * `@Public()`, `@BypassTransform()`, `@Roles()`, `@CurrentUser()` dekoratorlari.
 * `AuthUser` interfeysi (`src/common/interfaces/`) — `req.user` ning yagona ta'rifi.
-  Unda `password`/`pinCode` **ataylab yo'q**, `jwt.strategy` ularni `omit` bilan
-  bazadan ham olmaydi.
+  Unda `password`/`pinCode` **ataylab yo'q** — `jwt.strategy` ularni `select`
+  ro'yxatiga qo'shmaydi, ya'ni bazadan ham olinmaydi (`isActive` esa olinadi,
+  tekshirilgach `AuthUser` dan chiqarib tashlanadi).
 * `/api/v1` prefiks + URI versiyalash.
 * `helmet`, CORS cheklovi (`CORS_ORIGINS`), global rate-limit (daqiqasiga 100).
 * Swagger `/api/docs` da (prodda o'chirilgan), `nest-cli.json` da swagger plagini
   yoqilgan — DTO'larga `@ApiProperty` yozish **shart emas**.
-* Birinchi migration qo'llangan, baza sxema bilan mos.
+* 3 ta migration qo'llangan (`init`, `add_user_auth_fields_and_refresh_tokens`,
+  `add_user_tenant_relation`), baza sxema bilan mos.
+
+### Davom etayotgan ish (Faza 1, hali commit qilinmagan)
+
+* `AuthModule` yozildi va `app.module.ts` ga ulandi: `PassportModule` +
+  `JwtModule.registerAsync`, provayderlar `JwtStrategy` va `HashService`.
+* `HashService` — bcrypt (12 raund) parol/PIN uchun, refresh token uchun
+  `randomBytes(32)` + sha256. Parolni boshqa joyda qo'lda hash qilmang.
+* ⚠️ Fayllar `src/auth/src/auth/` da yotibdi (`nest g` noto'g'ri papkada
+  ishlatilgan). To'g'ri joyi — `src/auth/`; ko'chirilganda `app.module.ts`
+  dagi import ham yangilansin.
+* ⚠️ `auth.module.ts` da `expiresIn: Number(JWT_EXPIRES_IN)` — default qiymat
+  `'15m'` bo'lgani uchun `NaN` chiqadi. Satrni to'g'ridan-to'g'ri uzating.
+* `AuthController` / `AuthService` (login, refresh, logout) hali yo'q.
 
 ### Hali yo'q
 
-* **`AuthModule` yo'q** — `jwt.strategy.ts` yozilgan, lekin hech qayerda
-  ro'yxatdan o'tkazilmagan. `JwtAuthGuard`/`RolesGuard` ham global emas.
-  Bu Faza 1 ning asosiy ishi.
-* **Multi-tenancy yo'q** — JWT payload'da `tenantId`/`branchId` yo'q, so'rovlar
-  `branchId` bo'yicha filtrlanmaydi. Faza 1 gacha har qanday biznes-kod yozishda
-  buni yodda tuting.
+* **Multi-tenancy to'liq emas** — JWT payload faqat `{ sub }`, `tenantId`/`branchId`
+  har so'rovda bazadan `JwtStrategy` orqali olinadi. So'rovlar hali `branchId`
+  bo'yicha filtrlanmaydi — biznes-kod yozishda buni yodda tuting.
 * Biznes-modullar (menyu, stol, order, to'lov, ombor, xodim) — hech biri yo'q.
 * Ombor, davomat, obuna va push uchun **sxemada model ham yo'q** — ular
   `ROADMAP.md` ning 2-bo'limida ta'riflangan.
 * Redis env o'zgaruvchilari bor, lekin paket o'rnatilmagan (Faza 6).
-* `test/` papkasi yo'q, birorta `.spec.ts` yozilmagan (Faza 12).
+* Birorta `.spec.ts` yozilmagan, `test/jest-e2e.json` ham yo'q (Faza 12).
 * `app.controller.ts` / `app.service.ts` — NestJS shabloni ("Hello World").
 * `tsconfig.json` da strict rejim **o'chirilgan** (`strictNullChecks: false`,
   `noImplicitAny: false`). Buning o'rnini ESLint'ning `recommendedTypeChecked`
@@ -152,4 +190,7 @@ To'liq reja: **`docs/ROADMAP.md`** (git'ga tushmaydi, `.gitignore` da).
 ## Git
 
 * Asosiy branch — `master`, ishchi branch — `developer`.
+* `.claude/skills/prisma-composer/` — `postinstall` dagi `prisma skills sync`
+  avtomatik tortadi, loyihaga aloqasi yo'q (bu yerda Prisma Composer emas,
+  oddiy Prisma ORM ishlatiladi).
 * Conventional commit ishlating: `feat:`, `fix:`, `refactor:`, `chore:`.
