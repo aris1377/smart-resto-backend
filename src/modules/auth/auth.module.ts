@@ -2,9 +2,9 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtModule, JwtSignOptions } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
-import { JwtStrategy } from 'src/auth/strategies/jwt.strategy';
-import { HashService } from './hash.service';
+import { JwtStrategy } from 'src/modules/auth/strategies/jwt.strategy';
 import { AuthService } from './auth.service';
+import { HashService } from './hash.service';
 
 @Module({
   imports: [

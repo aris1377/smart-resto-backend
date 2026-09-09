@@ -1,4 +1,4 @@
-import { AuthUser } from '../../common/interfaces';
+import { AuthUser } from '../../../common/interfaces';
 
 /** Login/refresh natijasi — service va controller orasidagi shartnoma */
 export interface AuthTokens {

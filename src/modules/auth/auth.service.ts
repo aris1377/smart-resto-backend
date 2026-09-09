@@ -6,11 +6,11 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Prisma, User } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
-import { AuthUser } from '../common/interfaces';
-import { AuthTokens, JwtPayload } from './interfaces';
-import { HashService } from './hash.service';
+import { AuthUser } from '../../common/interfaces';
+import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto, LoginPinDto, RefreshTokenDto } from './dto';
+import { HashService } from './hash.service';
+import { AuthTokens, JwtPayload } from './interfaces';
 
 const MS_IN_DAY = 24 * 60 * 60 * 1000;
 
