@@ -21,7 +21,7 @@ pnpm start:prod       # node dist/main
 pnpm lint             # eslint --fix (type-checked qoidalar yoqilgan)
 pnpm format           # prettier --write
 pnpm test             # jest (hozircha birorta .spec.ts yo'q)
-pnpm test -- src/auth/auth.service.spec.ts   # bitta fayl
+pnpm test -- src/modules/auth/auth.service.spec.ts   # bitta fayl
 pnpm test -- -t "login"                      # nomi mos bitta test
 
 pnpm db:generate      # prisma generate
@@ -29,6 +29,7 @@ pnpm db:migrate       # prisma migrate dev  -- nom bilan: --name <aniq_nom>
 pnpm db:deploy        # prisma migrate deploy (PRODDA, hech narsa so'ramaydi)
 pnpm db:reset         # bazani tozalab, migrationlarni qayta qo'llaydi
 pnpm db:studio        # brauzerda baza ko'ruvchi
+pnpm db:seed          # demo tenant/filial/xodimlar (prisma/seed.ts, idempotent)
 ```
 
 > ⚠️ `prisma/migrations/` dagi fayllarni **hech qachon qo'lda tahrirlamang yoki
@@ -49,9 +50,14 @@ src/
 ├── app.module.ts            # ildiz modul: ConfigModule, Throttler, Prisma, Auth
 ├── config/env.validation.ts # .env uchun Joi sxemasi
 ├── prisma/                  # @Global() PrismaModule + PrismaService
-├── auth/
-│   ├── strategies/          # jwt.strategy.ts
-│   └── src/auth/            # ⚠️ AuthModule + HashService (noto'g'ri chuqurlik)
+├── modules/                 # biznes-modullar shu yerda
+│   └── auth/
+│       ├── auth.controller.ts
+│       ├── auth.service.ts
+│       ├── hash.service.ts  # bcrypt (parol/PIN) + sha256 (refresh token)
+│       ├── dto/
+│       ├── interfaces/      # AuthTokens, JwtPayload (faqat auth ishlatadi)
+│       └── strategies/      # jwt.strategy.ts
 └── common/
     ├── decorators/          # @Public(), @BypassTransform(), @Roles(), @CurrentUser()
     ├── guards/              # JwtAuthGuard, RolesGuard
@@ -60,10 +66,13 @@ src/
     └── interfaces/          # AuthUser
 ```
 
+Yangi biznes-modul `src/modules/<feature>/` da yaratiladi. `common/` faqat
+hamma modul ishlatadigan narsalar uchun (`AuthUser`, guardlar, dekoratorlar);
+bitta modulga tegishli tip o'sha modulning `interfaces/` papkasida qoladi.
+
 Global provayderlar `app.module.ts` da `APP_FILTER` / `APP_GUARD` / `APP_INTERCEPTOR`
-orqali ulanadi (`AllExceptionsFilter`, `ThrottlerGuard`, `TransformInterceptor`).
-`JwtAuthGuard` va `RolesGuard` hozircha **global emas** — har bir controllerda
-`@UseGuards(...)` yozish kerak.
+orqali ulanadi. `APP_GUARD` tartibi **muhim**: `ThrottlerGuard` -> `JwtAuthGuard`
+-> `RolesGuard` (arzon tekshiruv oldinda).
 
 ### Global konventsiyalar
 
@@ -90,10 +99,13 @@ uchun `class-validator` dekoratorli DTO yozish majburiy.
 import qilish shart emas, faqat konstruktorda `private readonly prisma: PrismaService`
 deb in'ektsiya qiling.
 
-**Autorizatsiya** — `@UseGuards(JwtAuthGuard, RolesGuard)` + `@Roles(...)`.
-`RolesGuard` `@Roles` bo'lmasa endpointni ochiq deb hisoblaydi, shuning uchun
-himoya kerak joyda dekoratorni unutmang. Foydalanuvchini `@CurrentUser()` yoki
-`@CurrentUser('id')` orqali oling.
+**Autorizatsiya** — `JwtAuthGuard` va `RolesGuard` **global**, ya'ni har bir
+endpoint sukut bo'yicha yopiq. `@UseGuards(...)` yozish shart emas:
+
+* ochiq qilish uchun — `@Public()` (QR mijoz endpointlari, login, health-check);
+* rol cheklovi uchun — `@Roles(Role.OWNER, Role.MANAGER)`. `@Roles` yozilmasa,
+  token bo'lgan **har qanday** foydalanuvchi kira oladi;
+* foydalanuvchini `@CurrentUser()` yoki `@CurrentUser('id')` orqali oling.
 
 ## Ma'lumotlar bazasi (prisma/schema.prisma)
 
@@ -125,8 +137,7 @@ Yagona haqiqat manbai — `src/config/env.validation.ts` (Joi):
 `REFRESH_TOKEN_EXPIRES_DAYS` (default 7), `ADMIN_API_KEY`, `REDIS_HOST`, `REDIS_PORT`.
 
 `.env` git'ga tushmaydi. Yangi o'zgaruvchi qo'shsangiz, Joi sxemasini **va**
-`.env.example` ni birga yangilang (`REFRESH_TOKEN_EXPIRES_DAYS` hozir
-`.env.example` da yo'q — sinxronlashtirish kerak).
+`.env.example` ni birga yangilang.
 
 ## Kod uslubi
 
@@ -140,7 +151,8 @@ Yagona haqiqat manbai — `src/config/env.validation.ts` (Joi):
 ## Loyihaning hozirgi holati
 
 To'liq reja: **`docs/ROADMAP.md`** (git'ga tushmaydi, `.gitignore` da).
-13 faza, ~7-9 hafta. **Faza 0 (poydevor) tugagan**, **Faza 1 (Auth) boshlangan**.
+13 faza, ~7-9 hafta. **Faza 0 (poydevor) va Faza 1 (Auth) tugagan**,
+Faza 2 (obuna) yoki MVP yo'li bo'yicha Faza 3 (menyu) navbatda.
 
 ### Tayyor (Faza 0)
 
@@ -159,24 +171,31 @@ To'liq reja: **`docs/ROADMAP.md`** (git'ga tushmaydi, `.gitignore` da).
 * 3 ta migration qo'llangan (`init`, `add_user_auth_fields_and_refresh_tokens`,
   `add_user_tenant_relation`), baza sxema bilan mos.
 
-### Davom etayotgan ish (Faza 1, hali commit qilinmagan)
+### Tayyor (Faza 1)
 
-* `AuthModule` yozildi va `app.module.ts` ga ulandi: `PassportModule` +
-  `JwtModule.registerAsync`, provayderlar `JwtStrategy` va `HashService`.
-* `HashService` — bcrypt (12 raund) parol/PIN uchun, refresh token uchun
-  `randomBytes(32)` + sha256. Parolni boshqa joyda qo'lda hash qilmang.
-* ⚠️ Fayllar `src/auth/src/auth/` da yotibdi (`nest g` noto'g'ri papkada
-  ishlatilgan). To'g'ri joyi — `src/auth/`; ko'chirilganda `app.module.ts`
-  dagi import ham yangilansin.
-* ⚠️ `auth.module.ts` da `expiresIn: Number(JWT_EXPIRES_IN)` — default qiymat
-  `'15m'` bo'lgani uchun `NaN` chiqadi. Satrni to'g'ridan-to'g'ri uzating.
-* `AuthController` / `AuthService` (login, refresh, logout) hali yo'q.
+* `AuthModule` (`src/modules/auth/`) — `PassportModule` + `JwtModule.registerAsync`,
+  provayderlar `JwtStrategy`, `AuthService`, `HashService`.
+* 6 ta endpoint: `POST /auth/login` (email+parol), `GET /auth/branches/:id/staff`,
+  `POST /auth/login-pin`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me`.
+  `/auth/me` dan boshqa hammasi `@Public()`, login endpointlarida
+  `@Throttle` bilan daqiqasiga 5 ta urinish.
+* **PIN login ikki bosqichli** — bcrypt tasodifiy tuz ishlatadi, ya'ni PIN hashini
+  qidirib bo'lmaydi. Avval xodim tanlanadi, keyin bitta solishtirish qilinadi.
+* **Refresh token rotatsiyasi** — bazada faqat sha256 hash, ishlatilgan token
+  darhol `revokedAt` bilan yopiladi, `logout` `updateMany` tufayli idempotent.
+* Login xatolarida "email topilmadi" va "parol xato" **bir xil xabar** beradi
+  (user enumeration'ning oldini olish).
+* `prisma/seed.ts` — demo tenant, filial va 6 xodim (3 parolli, 3 PIN'li).
+  `tsconfig.build.json` da `prisma` exclude qilingan, aks holda `nest build`
+  natijasi `dist/src/main.js` ga surilib ketadi.
 
 ### Hali yo'q
 
-* **Multi-tenancy to'liq emas** — JWT payload faqat `{ sub }`, `tenantId`/`branchId`
-  har so'rovda bazadan `JwtStrategy` orqali olinadi. So'rovlar hali `branchId`
-  bo'yicha filtrlanmaydi — biznes-kod yozishda buni yodda tuting.
+* **Filial izolyatsiyasi hali yozilmagan** — JWT payload faqat `{ sub }`,
+  `tenantId`/`branchId` har so'rovda bazadan `JwtStrategy` orqali olinadi.
+  Roadmapdagi qaror: har bir service `AuthUser` ni qabul qiladi va
+  `where: { branchId: user.branchId }` ni **o'zi yozadi** (sehr yo'q).
+  Birinchi biznes-modulda shu qoidani boshidan qo'llang.
 * Biznes-modullar (menyu, stol, order, to'lov, ombor, xodim) — hech biri yo'q.
 * Ombor, davomat, obuna va push uchun **sxemada model ham yo'q** — ular
   `ROADMAP.md` ning 2-bo'limida ta'riflangan.
