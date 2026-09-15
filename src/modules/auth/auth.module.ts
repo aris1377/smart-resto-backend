@@ -2,8 +2,9 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtModule, JwtSignOptions } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
-import { JwtStrategy } from 'src/modules/auth/strategies/jwt.strategy';
+import { JwtStrategy } from './strategies/jwt.strategy';
 import { AuthService } from './auth.service';
+import { AuthController } from './auth.controller';
 import { HashService } from './hash.service';
 
 @Module({
@@ -21,6 +22,7 @@ import { HashService } from './hash.service';
       }),
     }),
   ],
+  controllers: [AuthController],
   providers: [JwtStrategy, AuthService, HashService],
   exports: [HashService],
 })
