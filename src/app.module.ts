@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule, minutes } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -10,6 +11,8 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { envValidationSchema } from './config/env.validation';
 import { AuthModule } from './modules/auth/auth.module';
+import { SubscriptionGuard } from './modules/platform/guards/subscription.guard';
+import { PlatformModule } from './modules/platform/platform.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
@@ -24,18 +27,22 @@ import { PrismaModule } from './prisma/prisma.module';
         limit: 100,
       },
     ]),
+    // Obuna muddatini har kuni tekshiruvchi cron uchun
+    ScheduleModule.forRoot(),
     PrismaModule,
     AuthModule,
+    PlatformModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
-    // Tartib muhim: rate-limit -> autentifikatsiya -> rol tekshiruvi.
+    // Tartib muhim: rate-limit -> autentifikatsiya -> rol -> obuna.
     // Endpoint ochiq boʻlishi uchun @Public() yozilishi shart.
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
+    { provide: APP_GUARD, useClass: SubscriptionGuard },
     { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },
   ],
 })

@@ -8,7 +8,9 @@ import {
   ParseIntPipe,
   Post,
 } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
 import { minutes, Throttle } from '@nestjs/throttler';
+import { AllowExpired } from '../../common/decorators/allow-expired.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthUser } from '../../common/interfaces';
@@ -72,6 +74,10 @@ export class AuthController {
   }
 
   /** Yagona himoyalangan endpoint — tokenni tekshirish uchun ham qulay */
+  // Obuna tugagan boʻlsa ham ishlaydi: frontend avval "kimsan" deb soʻraydi,
+  // keyin roliga qarab "obunani yangilang" ekranini koʻrsatadi
+  @AllowExpired()
+  @ApiBearerAuth()
   @Get('me')
   me(@CurrentUser() user: AuthUser) {
     return user;
