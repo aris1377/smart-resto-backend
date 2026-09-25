@@ -30,13 +30,22 @@ export class AllExceptionsFilter implements ExceptionFilter {
         const body = exceptionResponse as { message?: string | string[] };
         message = body.message ?? exceptionResponse;
       }
-    } else if (exception instanceof Error) {
-      message = exception.message;
     }
 
-    // Xatolikni konsolga log qilamiz
+    // Kutilmagan xatoning matni mijozga chiqmaydi (ichki tafsilot oshkor
+    // boʻlmasin) — logga esa toʻliq holicha yoziladi
+    let logMessage: string;
+
+    if (exception instanceof HttpException) {
+      logMessage = JSON.stringify(message);
+    } else if (exception instanceof Error) {
+      logMessage = exception.message;
+    } else {
+      logMessage = 'Nomaʼlum xato turi';
+    }
+
     this.logger.error(
-      `HTTP Status: ${status} | Path: ${request.url} | Error: ${JSON.stringify(message)}`,
+      `HTTP Status: ${status} | Path: ${request.url} | Error: ${logMessage}`,
       (exception as Error)?.stack,
     );
 
