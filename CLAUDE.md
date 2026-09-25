@@ -51,13 +51,22 @@ src/
 ├── config/env.validation.ts # .env uchun Joi sxemasi
 ├── prisma/                  # @Global() PrismaModule + PrismaService
 ├── modules/                 # biznes-modullar shu yerda
-│   └── auth/
-│       ├── auth.controller.ts
-│       ├── auth.service.ts
-│       ├── hash.service.ts  # bcrypt (parol/PIN) + sha256 (refresh token)
-│       ├── dto/
-│       ├── interfaces/      # AuthTokens, JwtPayload (faqat auth ishlatadi)
-│       └── strategies/      # jwt.strategy.ts
+│   ├── auth/
+│   │   ├── auth.controller.ts
+│   │   ├── auth.service.ts
+│   │   ├── hash.service.ts  # bcrypt (parol/PIN) + sha256 (refresh token)
+│   │   ├── dto/
+│   │   ├── interfaces/      # AuthTokens, JwtPayload (faqat auth ishlatadi)
+│   │   └── strategies/      # jwt.strategy.ts
+│   └── platform/            # C qatlam: faqat SUPER_ADMIN
+│       ├── platform.controller.ts
+│       ├── platform.service.ts      # tenant CRUD, statistika
+│       ├── plan.service.ts          # tarif CRUD
+│       ├── subscription.controller.ts  # GET /subscription/me (B qatlam)
+│       ├── subscription.service.ts  # obuna berish + assertActive()
+│       ├── subscription.cron.ts     # kunlik muddat tekshiruvi
+│       ├── guards/          # SubscriptionGuard (APP_GUARD)
+│       └── dto/
 └── common/
     ├── decorators/          # @Public(), @BypassTransform(), @Roles(), @CurrentUser()
     ├── guards/              # JwtAuthGuard, RolesGuard
@@ -72,7 +81,12 @@ bitta modulga tegishli tip o'sha modulning `interfaces/` papkasida qoladi.
 
 Global provayderlar `app.module.ts` da `APP_FILTER` / `APP_GUARD` / `APP_INTERCEPTOR`
 orqali ulanadi. `APP_GUARD` tartibi **muhim**: `ThrottlerGuard` -> `JwtAuthGuard`
--> `RolesGuard` (arzon tekshiruv oldinda).
+-> `RolesGuard` -> `SubscriptionGuard` (arzon tekshiruv oldinda; oxirgisi
+`req.user.tenantId` ga muhtoj).
+
+**Pagination konventsiyasi** — ro'yxat qaytaradigan har bir endpoint
+`{ items, meta: { page, limit, total, totalPages } }` qaytaradi, so'rov esa
+`?page=&limit=` oladi (`ListTenantsDto` namuna).
 
 ### Global konventsiyalar
 
@@ -107,6 +121,13 @@ endpoint sukut bo'yicha yopiq. `@UseGuards(...)` yozish shart emas:
   token bo'lgan **har qanday** foydalanuvchi kira oladi;
 * foydalanuvchini `@CurrentUser()` yoki `@CurrentUser('id')` orqali oling.
 
+**Obuna** — `SubscriptionGuard` obunasi tugagan tenantga **402** beradi
+(bloklangan tenantga — **403**). Istisno kerak bo'lsa `@AllowExpired()`:
+ochiq orderni yopish va to'lov qabul qilish obunasiz ham ishlashi kerak
+(Faza 7-8), `/auth/me` ham shunday — frontend avval "kimsan" deb so'raydi.
+`@Public()` endpointlarda `req.user` yo'q, shuning uchun QR oqimi tekshiruvni
+service ichida `SubscriptionService.assertActive(tenantId)` bilan qiladi.
+
 ## Ma'lumotlar bazasi (prisma/schema.prisma)
 
 Ierarxiya: `Tenant → Branch → { Hall → Table, Category → Product, StopList, Order }`.
@@ -127,7 +148,18 @@ Sxema konventsiyalari (yangi model qo'shganda ham shunday davom eting):
   Bekor qilish `revokedAt` ni to'ldirish orqali (qator o'chirilmaydi).
 * Ro'yxatga o'xshash maydonlar (`Order.status`, `Table.status`, `Payment.provider`)
   hozircha oddiy `String` — mumkin bo'lgan qiymatlar kod ichida kommentda ko'rsatilgan.
-* `Role` va `Unit` — Prisma enum.
+* `Role`, `Unit`, `SubscriptionStatus`, `InvoiceStatus` — Prisma enum.
+  **Yangi modellarda status'ni boshidan enum qiling** (eski `String` maydonlar
+  Faza 4/7/8 da enumga o'tkaziladi).
+* Obuna: `Plan` -> `Subscription` -> `TenantInvoice`. Uzaytirish **yangi qator**
+  yaratadi (to'lov tarixi), hozirgi obuna = `expiresAt` eng kattasi.
+  `Tenant.isActive` obunadan alohida: u shartnoma holati.
+* **Narx uch qavatli**: `Plan.priceMonthly` (ro'yxat narxi) ->
+  `Subscription.priceMonthly` (shu restoran bilan kelishilgani, nullable) ->
+  `TenantInvoice.amount` (to'langan summaning o'zgarmas nusxasi). Tarif narxi
+  keyin o'zgarsa, eski obuna va hisob-fakturalarga **ta'sir qilmaydi**.
+* Pul API'ga ham **matn** bo'lib kiradi (`"300000"`), `number` emas —
+  DTO'da `@IsDecimal({ decimal_digits: '0,2' })`.
 
 ## Muhit o'zgaruvchilari
 
@@ -151,8 +183,8 @@ Yagona haqiqat manbai — `src/config/env.validation.ts` (Joi):
 ## Loyihaning hozirgi holati
 
 To'liq reja: **`docs/ROADMAP.md`** (git'ga tushmaydi, `.gitignore` da).
-13 faza, ~7-9 hafta. **Faza 0 (poydevor) va Faza 1 (Auth) tugagan**,
-Faza 2 (obuna) yoki MVP yo'li bo'yicha Faza 3 (menyu) navbatda.
+13 faza, ~7-9 hafta. **Faza 0, 1 va 2 tugagan**. Navbatda — Faza 3 (menyu):
+u yerda birinchi marta `where: { branchId: user.branchId }` qoidasi qo'llanadi.
 
 ### Tayyor (Faza 0)
 
@@ -168,8 +200,7 @@ Faza 2 (obuna) yoki MVP yo'li bo'yicha Faza 3 (menyu) navbatda.
 * `helmet`, CORS cheklovi (`CORS_ORIGINS`), global rate-limit (daqiqasiga 100).
 * Swagger `/api/docs` da (prodda o'chirilgan), `nest-cli.json` da swagger plagini
   yoqilgan — DTO'larga `@ApiProperty` yozish **shart emas**.
-* 3 ta migration qo'llangan (`init`, `add_user_auth_fields_and_refresh_tokens`,
-  `add_user_tenant_relation`), baza sxema bilan mos.
+* 4 ta migration qo'llangan (oxirgisi `add_subscription_models`), baza sxema bilan mos.
 
 ### Tayyor (Faza 1)
 
@@ -188,6 +219,33 @@ Faza 2 (obuna) yoki MVP yo'li bo'yicha Faza 3 (menyu) navbatda.
 * `prisma/seed.ts` — demo tenant, filial va 6 xodim (3 parolli, 3 PIN'li).
   `tsconfig.build.json` da `prisma` exclude qilingan, aks holda `nest build`
   natijasi `dist/src/main.js` ga surilib ketadi.
+
+### Tayyor (Faza 2)
+
+* `PlatformModule` — `/api/v1/platform/*`, klass darajasida `@Roles(SUPER_ADMIN)`:
+  `GET tenants` (pagination+filtr+qidiruv), `GET tenants/:id`, `POST tenants`,
+  `PATCH tenants/:id/status`, `POST tenants/:id/subscription`,
+  `GET/POST plans`, `PATCH plans/:id`, `GET stats`.
+* `GET /subscription/me` — **B qatlam**: OWNER/MANAGER o'z obunasini ko'radi
+  (tarif, tugash sanasi, `daysLeft`, `usage` va `limits`). `@AllowExpired()` —
+  obuna tugaganda ham ochiq bo'lishi shart, aks holda foydalanuvchi 402 dan
+  boshqa hech narsa ko'rmaydi. `tenantId` so'rovdan emas, tokendan olinadi.
+* `POST /platform/tenants` — tenant + birinchi OWNER bitta `$transaction`
+  ichida. Parol tranzaksiyadan **tashqarida** hashlanadi. Filial bu yerda
+  ochilmaydi: u OWNER ning ishi (Faza 4), aks holda obuna va `maxBranches`
+  tekshiruvlari chetlab o'tilardi.
+* `SubscriptionGuard` global (4-guard), `@AllowExpired()` bilan istisno.
+* `SubscriptionCron` — har kuni 03:00 da muddati o'tganlarni `EXPIRED` qiladi va
+  3 kun qolganlarni logga yozadi. ⚠️ Bir nechta instansiyada har birida ishlaydi
+  (Faza 12 da lock kerak).
+* `AllExceptionsFilter` endi kutilmagan xatoning matnini mijozga **chiqarmaydi**
+  (faqat logga), oldin `error.message` javobga tushardi.
+* Obuna berishda narx: `dto.priceMonthly` -> o'sha tarifdagi oldingi kelishuv ->
+  tarif narxi. Ya'ni "sizga 100 mingga" deb kelishilgan restoran uzaytirilganda
+  jimgina to'liq narxga o'tib ketmaydi.
+* `Plan.maxBranches`/`maxUsers` **hali tekshirilmaydi** — tekshiruv cheklov
+  buziladigan joyda yoziladi: filial Faza 4 da, xodim Faza 10 da.
+* Seed: 3 ta tarif + demo tenantga 1 yillik faol obuna (usiz hamma endpoint 402).
 
 ### Hali yo'q
 
