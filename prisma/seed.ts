@@ -1,4 +1,9 @@
-import { PrismaClient, Role } from '@prisma/client';
+import {
+  InvoiceStatus,
+  PrismaClient,
+  Role,
+  SubscriptionStatus,
+} from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -8,6 +13,12 @@ const BCRYPT_ROUNDS = 12;
 
 const TENANT_NAME = 'Demo Resto';
 const BRANCH_NAME = 'Markaziy filial';
+
+const PLANS = [
+  { name: 'Basic', priceMonthly: 300000, maxBranches: 1, maxUsers: 10 },
+  { name: 'Pro', priceMonthly: 700000, maxBranches: 5, maxUsers: 50 },
+  { name: 'Enterprise', priceMonthly: 1500000, maxBranches: 50, maxUsers: 500 },
+];
 
 interface SeedUser {
   name: string;
@@ -109,8 +120,60 @@ async function main() {
     });
   }
 
+  // Tariflar — nomi unique, shuning uchun upsert dublikat yaratmaydi
+  for (const plan of PLANS) {
+    await prisma.plan.upsert({
+      where: { name: plan.name },
+      update: plan,
+      create: plan,
+    });
+  }
+
+  const basicPlan = await prisma.plan.findUniqueOrThrow({
+    where: { name: 'Basic' },
+  });
+
+  // Demo tenantga faol obuna: usiz SubscriptionGuard hamma endpointga 402 beradi
+  const now = new Date();
+  const activeSubscription = await prisma.subscription.findFirst({
+    where: {
+      tenantId: tenant.id,
+      status: SubscriptionStatus.ACTIVE,
+      expiresAt: { gt: now },
+    },
+  });
+
+  if (!activeSubscription) {
+    const expiresAt = new Date(now);
+    expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+
+    const subscription = await prisma.subscription.create({
+      data: {
+        tenantId: tenant.id,
+        planId: basicPlan.id,
+        startsAt: now,
+        expiresAt,
+        status: SubscriptionStatus.ACTIVE,
+      },
+    });
+
+    await prisma.tenantInvoice.create({
+      data: {
+        tenantId: tenant.id,
+        subscriptionId: subscription.id,
+        amount: basicPlan.priceMonthly.mul(12),
+        periodFrom: now,
+        periodTo: expiresAt,
+        status: InvoiceStatus.PAID,
+        paidAt: now,
+      },
+    });
+  }
+
   console.log(`Tenant: ${tenant.name} (id=${tenant.id})`);
   console.log(`Branch: ${branch.name} (id=${branch.id})`);
+  console.log(`Tariflar: ${PLANS.map((p) => p.name).join(', ')}`);
+  console.log('Obuna: Basic, 1 yil, ACTIVE');
   console.log('');
   console.log('Email bilan kirish (parol):');
   console.log('  superadmin@smartresto.uz  SuperAdmin123');
