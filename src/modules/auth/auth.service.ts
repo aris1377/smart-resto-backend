@@ -12,7 +12,7 @@ import { LoginDto, LoginPinDto, RefreshTokenDto } from './dto';
 import { HashService } from './hash.service';
 import { AuthTokens, JwtPayload } from './interfaces';
 
-const MS_IN_DAY = 24 * 60 * 60 * 1000;
+const MS_IN_DAY = 24 * 60 * 60 * 1000; // 1 day
 
 // Planshetdagi xodimlar roʻyxati ochiq endpointdan qaytadi — ortiqcha maydon chiqmasin
 const STAFF_SELECT = {
