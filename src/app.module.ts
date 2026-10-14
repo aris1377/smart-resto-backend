@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
-import { ThrottlerGuard, ThrottlerModule, minutes } from '@nestjs/throttler';
+import { ThrottlerGuard, ThrottlerModule, seconds } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { CommonModule } from './common/common.module';
@@ -24,12 +24,17 @@ import { PrismaModule } from './prisma/prisma.module';
       isGlobal: true,
       validationSchema: envValidationSchema,
     }),
-    ThrottlerModule.forRoot([
-      {
-        ttl: minutes(1),
-        limit: 100,
-      },
-    ]),
+    // Limit env'dan olinadi: prodda boshqa qiymat, yuk testida esa
+    // cheklov umuman xalaqit bermasligi uchun kattalashtiriladi
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => [
+        {
+          ttl: seconds(config.get<number>('THROTTLE_TTL_SECONDS', 60)),
+          limit: config.get<number>('THROTTLE_LIMIT', 100),
+        },
+      ],
+    }),
     // Obuna muddatini har kuni tekshiruvchi cron uchun
     ScheduleModule.forRoot(),
     PrismaModule,

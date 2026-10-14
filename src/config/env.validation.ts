@@ -23,6 +23,10 @@ export const envValidationSchema = Joi.object({
 
   ADMIN_API_KEY: Joi.string().optional(),
 
+  // Global rate-limit. Yuk testi va prod sozlamasi uchun env'dan boshqariladi.
+  THROTTLE_TTL_SECONDS: Joi.number().integer().min(1).default(60),
+  THROTTLE_LIMIT: Joi.number().integer().min(1).default(100),
+
   // Fayl saqlash (MinIO / S3). Lokalda docker-compose.yml dagi MinIO.
   S3_ENDPOINT: Joi.string().uri().default('http://localhost:9200'),
   S3_REGION: Joi.string().default('us-east-1'),
