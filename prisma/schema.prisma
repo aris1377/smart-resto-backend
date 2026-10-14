@@ -40,6 +40,13 @@ enum InvoiceStatus {
   CANCELED
 }
 
+enum TableStatus {
+  FREE // bo'sh
+  OCCUPIED // mijoz o'tirgan, ochiq order bor
+  RESERVED // oldindan band qilingan
+  BILL_REQUESTED // mijoz hisob so'radi
+}
+
 // ==========================================
 // 2. TENANCY & USERS (Abonentlar va Foydalanuvchilar)
 // ==========================================
@@ -75,6 +82,8 @@ model Branch {
   stopLists  StopList[]
   orders     Order[]
 
+  // Filiallar har doim tenant bo'yicha o'qiladi
+  @@index([tenantId])
   @@map("branches")
 }
 
@@ -188,6 +197,9 @@ model Hall {
   branch Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
   tables Table[]
 
+  // Bitta filialda bir xil nomli ikkita zal bo'lmasin
+  @@unique([branchId, name])
+  @@index([branchId])
   @@map("halls")
 }
 
@@ -195,12 +207,17 @@ model Table {
   id          Int    @id @default(autoincrement())
   hallId      Int    @map("hall_id")
   tableNumber String @map("table_number")
+  // Chop etilgan QR shu tokenga bog'langan — hech qachon o'zgartirilmaydi
   qrCodeToken String @unique @map("qr_code_token")
-  status      String @default("free") // free, occupied, reserved
+
+  status TableStatus @default(FREE)
 
   hall   Hall    @relation(fields: [hallId], references: [id], onDelete: Cascade)
   orders Order[]
 
+  // Zal ichida stol raqami takrorlanmasin ("Stol 1" har zalda bo'lishi mumkin)
+  @@unique([hallId, tableNumber])
+  @@index([hallId])
   @@map("tables")
 }
 
