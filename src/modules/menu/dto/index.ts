@@ -1,4 +1,4 @@
-export { BranchScopeQueryDto } from './branch-scope-query.dto';
+export { BranchScopeQueryDto } from '../../../common/dto';
 export { CreateCategoryDto } from './create-category.dto';
 export { CreateProductDto } from './create-product.dto';
 export { ListProductsDto } from './list-products.dto';

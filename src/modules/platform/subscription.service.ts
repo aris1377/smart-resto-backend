@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   HttpException,
   HttpStatus,
@@ -88,6 +89,34 @@ export class SubscriptionService {
   }
 
   /**
+   * Tarifdagi filial chegarasi. Yangi filial ochishdan oldin chaqiriladi.
+   *
+   * Chegara `Plan` da yozilgan, lekin tekshiruv shu yerda — qoida obuna
+   * ma'lumotining yonida tursin, filial moduli esa uni bilmasin.
+   */
+  async assertCanAddBranch(tenantId: number): Promise<void> {
+    const subscription = await this.prisma.subscription.findFirst({
+      where: { tenantId },
+      orderBy: { expiresAt: 'desc' },
+      select: { plan: { select: { name: true, maxBranches: true } } },
+    });
+
+    // Obunasi yo'q restoran bu yergacha yetib kelmaydi (SubscriptionGuard
+    // 402 beradi), lekin servis o'zi ham himoyalangan bo'lsin
+    if (!subscription) {
+      throw new ConflictException('Faol obuna topilmadi.');
+    }
+
+    const branches = await this.prisma.branch.count({ where: { tenantId } });
+
+    if (branches >= subscription.plan.maxBranches) {
+      throw new ConflictException(
+        `"${subscription.plan.name}" tarifida ${subscription.plan.maxBranches} ta filial mumkin. Yangisini ochish uchun tarifni yangilang.`,
+      );
+    }
+  }
+
+  /**
    * Restoranning o'z obunasi — OWNER/MANAGER uchun.
    * Obuna tugagan bo'lsa ham javob beradi: foydalanuvchi nima bo'layotganini
    * va nima qilish kerakligini ko'rishi shart.
@@ -118,7 +147,7 @@ export class SubscriptionService {
       this.prisma.user.count({ where: { tenantId, isActive: true } }),
     ]);
 
-    // Limitlar hozircha faqat ko'rsatiladi; tekshiruv Faza 4 va 10 da qo'shiladi
+    // maxBranches `assertCanAddBranch()` da tekshiriladi, maxUsers Faza 10 da
     const usage = { branches, users };
 
     if (!subscription) {

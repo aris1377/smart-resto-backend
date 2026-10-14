@@ -12,6 +12,7 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { envValidationSchema } from './config/env.validation';
 import { AuthModule } from './modules/auth/auth.module';
+import { BranchModule } from './modules/branch/branch.module';
 import { MenuModule } from './modules/menu/menu.module';
 import { SubscriptionGuard } from './modules/platform/guards/subscription.guard';
 import { PlatformModule } from './modules/platform/platform.module';
@@ -42,6 +43,7 @@ import { PrismaModule } from './prisma/prisma.module';
     StorageModule,
     AuthModule,
     PlatformModule,
+    BranchModule,
     MenuModule,
   ],
   controllers: [AppController],

@@ -5,6 +5,7 @@ import {
   SubscriptionStatus,
   Unit,
 } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -14,6 +15,8 @@ const BCRYPT_ROUNDS = 12;
 
 const TENANT_NAME = 'Demo Resto';
 const BRANCH_NAME = 'Markaziy filial';
+const HALL_NAME = 'Asosiy zal';
+const TABLE_NUMBERS = ['1', '2', '3', '4'];
 
 const PLANS = [
   { name: 'Basic', priceMonthly: 300000, maxBranches: 1, maxUsers: 10 },
@@ -230,10 +233,34 @@ async function main() {
     }
   }
 
+  // Demo zal va stollar: Faza 4 ni test qilish uchun.
+  // QR token faqat yangi stol uchun generatsiya qilinadi — mavjud stolniki
+  // o'zgarmaydi, aks holda chop etilgan QR ishlamay qolardi.
+  const hall =
+    (await prisma.hall.findFirst({
+      where: { branchId: branch.id, name: HALL_NAME },
+    })) ??
+    (await prisma.hall.create({
+      data: { branchId: branch.id, name: HALL_NAME },
+    }));
+
+  for (const tableNumber of TABLE_NUMBERS) {
+    const existing = await prisma.table.findFirst({
+      where: { hallId: hall.id, tableNumber },
+    });
+
+    if (!existing) {
+      await prisma.table.create({
+        data: { hallId: hall.id, tableNumber, qrCodeToken: randomUUID() },
+      });
+    }
+  }
+
   console.log(`Tenant: ${tenant.name} (id=${tenant.id})`);
   console.log(`Branch: ${branch.name} (id=${branch.id})`);
   console.log(`Tariflar: ${PLANS.map((p) => p.name).join(', ')}`);
   console.log('Obuna: Basic, 1 yil, ACTIVE');
+  console.log(`Zal: ${hall.name}, stollar: ${TABLE_NUMBERS.join(', ')}`);
   console.log(`Menyu: ${MENU.length} kategoriya, ${MENU.reduce((n, g) => n + g.products.length, 0)} taom`);
   console.log('');
   console.log('Email bilan kirish (parol):');

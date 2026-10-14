@@ -36,6 +36,12 @@ export const envValidationSchema = Joi.object({
   // Rasm havolasi shu manzil orqali quriladi (prodda CDN bo'lishi mumkin)
   S3_PUBLIC_URL: Joi.string().uri().default('http://localhost:9200'),
 
+  // Stol QR kodi shu manzilga ishora qiladi: <QR_BASE_URL>/<qrCodeToken>.
+  // Prodda bu mijozga ko'rinadigan sayt bo'ladi (Faza 5 dagi QR oqimi).
+  QR_BASE_URL: Joi.string()
+    .uri()
+    .default('http://localhost:3000/api/v1/public/qr'),
+
   // Faza 6 (Redis) da majburiy bo'ladi, hozircha default bilan
   REDIS_HOST: Joi.string().default('localhost'),
   REDIS_PORT: Joi.number().port().default(6379),
