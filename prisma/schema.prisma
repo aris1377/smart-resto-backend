@@ -217,6 +217,8 @@ model Category {
   branch   Branch    @relation(fields: [branchId], references: [id], onDelete: Cascade)
   products Product[]
 
+  // Menyu har safar filial bo'yicha o'qiladi
+  @@index([branchId])
   @@map("categories")
 }
 
@@ -238,6 +240,7 @@ model Product {
   stopLists  StopList[]
   orderItems OrderItem[]
 
+  @@index([categoryId])
   @@map("products")
 }
 
@@ -250,6 +253,8 @@ model StopList {
   branch  Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
+  // Bitta filialda bitta mahsulot uchun bitta yozuv bo'lsin
+  @@unique([branchId, productId])
   @@map("stop_lists")
 }
 
