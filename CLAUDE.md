@@ -29,8 +29,15 @@ pnpm db:migrate       # prisma migrate dev  -- nom bilan: --name <aniq_nom>
 pnpm db:deploy        # prisma migrate deploy (PRODDA, hech narsa so'ramaydi)
 pnpm db:reset         # bazani tozalab, migrationlarni qayta qo'llaydi
 pnpm db:studio        # brauzerda baza ko'ruvchi
-pnpm db:seed          # demo tenant/filial/xodimlar (prisma/seed.ts, idempotent)
+pnpm db:seed          # demo tenant/filial/xodimlar/menyu (prisma/seed.ts, idempotent)
+
+docker compose up -d minio   # rasm saqlash uchun MinIO (9200 API, 9201 konsol)
 ```
+
+> `pnpm db:migrate` (`prisma migrate dev`) **interaktiv** — ba'zi o'zgarishlarda
+> tasdiq so'raydi. Agar terminal interaktiv bo'lmasa, muqobil yo'l:
+> `prisma migrate diff --from-schema-datasource ... --to-schema-datamodel ... --script`
+> bilan SQL olinadi, yangi migration papkasiga yoziladi va `pnpm db:deploy` qo'llaydi.
 
 > ⚠️ `prisma/migrations/` dagi fayllarni **hech qachon qo'lda tahrirlamang yoki
 > o'chirmang** — ular git'da saqlanadi va prodda ketma-ket qo'llanadi. Sxemani
@@ -58,6 +65,13 @@ src/
 │   │   ├── dto/
 │   │   ├── interfaces/      # AuthTokens, JwtPayload (faqat auth ishlatadi)
 │   │   └── strategies/      # jwt.strategy.ts
+│   ├── menu/                # Faza 3: kategoriya, mahsulot, stop-list, menyu
+│   │   ├── category.controller.ts / .service.ts
+│   │   ├── product.controller.ts / .service.ts   # + rasm yuklash
+│   │   ├── stop-list.controller.ts / .service.ts
+│   │   ├── menu.controller.ts / .service.ts      # GET /menu
+│   │   └── dto/
+│   ├── storage/             # @Global() StorageService — S3/MinIO
 │   └── platform/            # C qatlam: faqat SUPER_ADMIN
 │       ├── platform.controller.ts
 │       ├── platform.service.ts      # tenant CRUD, statistika
@@ -68,7 +82,8 @@ src/
 │       ├── guards/          # SubscriptionGuard (APP_GUARD)
 │       └── dto/
 └── common/
-    ├── decorators/          # @Public(), @BypassTransform(), @Roles(), @CurrentUser()
+    ├── services/            # @Global() BranchScopeService
+    ├── decorators/          # @Public(), @BypassTransform(), @Roles(), @CurrentUser(), @AllowExpired()
     ├── guards/              # JwtAuthGuard, RolesGuard
     ├── filters/             # AllExceptionsFilter
     ├── interceptors/        # TransformInterceptor
@@ -83,6 +98,18 @@ Global provayderlar `app.module.ts` da `APP_FILTER` / `APP_GUARD` / `APP_INTERCE
 orqali ulanadi. `APP_GUARD` tartibi **muhim**: `ThrottlerGuard` -> `JwtAuthGuard`
 -> `RolesGuard` -> `SubscriptionGuard` (arzon tekshiruv oldinda; oxirgisi
 `req.user.tenantId` ga muhtoj).
+
+**Filial doirasi (eng muhim qoida)** — restoran ma'lumoti bilan ishlaydigan
+har bir service `BranchScopeService` dan boshlanadi:
+
+* `resolve(user, dto.branchId)` — ro'yxat va yaratishda. Xodim uchun tokendagi
+  filial; OWNER uchun so'ralgan filial, lekin u shu tenantga tegishliligi
+  tekshiriladi (begona filial — **404**, 403 emas: mavjudligini ham oshkor
+  qilmaymiz). OWNER `branchId` bermasa — **400**.
+* `assertAccess(user, entity.branchId)` — mavjud yozuv ustidagi amallarda
+  (`PATCH /categories/5`), filial yozuvning o'zidan olinadi.
+
+Sehr yo'q: `where: { branchId }` har bir service'da ko'rinib turadi.
 
 **Pagination konventsiyasi** — ro'yxat qaytaradigan har bir endpoint
 `{ items, meta: { page, limit, total, totalPages } }` qaytaradi, so'rov esa
@@ -148,6 +175,14 @@ Sxema konventsiyalari (yangi model qo'shganda ham shunday davom eting):
   Bekor qilish `revokedAt` ni to'ldirish orqali (qator o'chirilmaydi).
 * Ro'yxatga o'xshash maydonlar (`Order.status`, `Table.status`, `Payment.provider`)
   hozircha oddiy `String` — mumkin bo'lgan qiymatlar kod ichida kommentda ko'rsatilgan.
+* Menyu ierarxiyasi: `Branch -> Category -> Product`. Mahsulotning filiali
+  **kategoriyasi orqali** aniqlanadi (`where: { category: { branchId } }`).
+* `Product.isActive: false` — menyudan olib qo'yish. **Hard delete qilinmaydi**:
+  `OrderItem -> Product` bog'lanishi `Cascade`, ya'ni o'chirish sotilgan
+  taomlarni order tarixidan yechib yuborardi. Kategoriya esa faqat **bo'sh**
+  bo'lsa o'chiriladi (aks holda 409).
+* `StopList` — vaqtinchalik va filialga xos ("taom tugadi"), `isActive` esa
+  doimiy. `@@unique([branchId, productId])` tufayli upsert xavfsiz.
 * `Role`, `Unit`, `SubscriptionStatus`, `InvoiceStatus` — Prisma enum.
   **Yangi modellarda status'ni boshidan enum qiling** (eski `String` maydonlar
   Faza 4/7/8 da enumga o'tkaziladi).
@@ -166,7 +201,11 @@ Sxema konventsiyalari (yangi model qo'shganda ham shunday davom eting):
 Yagona haqiqat manbai — `src/config/env.validation.ts` (Joi):
 `NODE_ENV`, `PORT`, `CORS_ORIGINS` (prodda **majburiy**), `DATABASE_URL`,
 `JWT_SECRET` (min 32 belgi), `JWT_EXPIRES_IN` (default `15m`),
-`REFRESH_TOKEN_EXPIRES_DAYS` (default 7), `ADMIN_API_KEY`, `REDIS_HOST`, `REDIS_PORT`.
+`REFRESH_TOKEN_EXPIRES_DAYS` (default 7), `ADMIN_API_KEY`,
+`THROTTLE_TTL_SECONDS` (default 60) va `THROTTLE_LIMIT` (default 100) —
+global rate-limit, `REDIS_HOST`, `REDIS_PORT`,
+`S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`,
+`S3_PUBLIC_URL` (lokalda `docker-compose.yml` dagi MinIO, port 9200).
 
 `.env` git'ga tushmaydi. Yangi o'zgaruvchi qo'shsangiz, Joi sxemasini **va**
 `.env.example` ni birga yangilang.
@@ -183,8 +222,8 @@ Yagona haqiqat manbai — `src/config/env.validation.ts` (Joi):
 ## Loyihaning hozirgi holati
 
 To'liq reja: **`docs/ROADMAP.md`** (git'ga tushmaydi, `.gitignore` da).
-13 faza, ~7-9 hafta. **Faza 0, 1 va 2 tugagan**. Navbatda — Faza 3 (menyu):
-u yerda birinchi marta `where: { branchId: user.branchId }` qoidasi qo'llanadi.
+13 faza, ~7-9 hafta. **Faza 0, 1, 2 va 3 tugagan**. Navbatda — Faza 4
+(zal va stollar + QR token).
 
 ### Tayyor (Faza 0)
 
@@ -247,14 +286,60 @@ u yerda birinchi marta `where: { branchId: user.branchId }` qoidasi qo'llanadi.
   buziladigan joyda yoziladi: filial Faza 4 da, xodim Faza 10 da.
 * Seed: 3 ta tarif + demo tenantga 1 yillik faol obuna (usiz hamma endpoint 402).
 
+### Tayyor (Faza 3)
+
+* `MenuModule` (`src/modules/menu/`) — 14 endpoint:
+  `GET/POST /categories`, `PATCH/DELETE /categories/:id`,
+  `GET /products` (pagination, `?categoryId`, `?search`, `?includeInactive`),
+  `GET/POST /products`, `PATCH/DELETE /products/:id`,
+  `POST/DELETE /products/:id/image`, `GET/PUT /stop-list`, `GET /menu`.
+* **`BranchScopeService`** (`src/common/services/`) — filial doirasi shu yerda
+  hal qilinadi, Faza 4-11 dagi har bir modul shuni chaqiradi.
+* Rollar: menyu yozuvi — OWNER/MANAGER; o'qish — restorandagi hamma rol;
+  stop-list — OWNER/MANAGER/**KITCHEN** (taom tugaganini oshxona biladi).
+* `StorageModule` (`@Global()`) — S3/MinIO. Fayl nomi **serverda** generatsiya
+  qilinadi (`products/<id>/<uuid>.jpg`), mijozning fayl nomiga ishonilmaydi.
+  Ruxsat: JPEG/PNG/WebP, 5 MB. Rasm almashtirilganda eskisi xotiradan o'chadi.
+  Bucket ilova ko'tarilganda avtomatik yaratiladi va ochiq o'qishga sozlanadi.
+* `tsconfig.json` da `types: ["node", "express", "multer"]` — `Express.Multer.File`
+  tipi shusiz topilmaydi.
+* Seed'da demo menyu: 3 kategoriya, 8 taom.
+* Redis cache (`GET /menu`) **ataylab kechiktirildi** — roadmapning texnologiyalar
+  jadvalida `ioredis` Faza 6 da. Menyu hozir 2 ta parallel so'rov bilan
+  quriladi (N+1 yo'q).
+
+### Yuk testi natijalari (2026-10-14, dev noutbuk, localhost)
+
+`autocannon`, 10 soniya, `GET /menu`. Raqamlar **nisbatlar uchun**, prodda
+boshqacha bo'ladi:
+
+| Holat | Ulanish | p50 | Req/sek |
+|---|---:|---:|---:|
+| 8 taom (1.4 KB) | 10 / 50 / 100 | 8 / 34 / 69 ms | 1159 / 1399 / 1410 |
+| 158 taom (38 KB) | 10 / 50 / 100 | 13 / 62 / 130 ms | 752 / 795 / 750 |
+| 158 taom + 60s xotira-cache | 10 / 50 / 100 | 8 / 36 / 69 ms | 1186 / 1340 / 1398 |
+
+Bazaning o'zi (menyuning 2 ta so'rovi) — 8 taomda `p50 = 0.67 ms`, 158 taomda
+`p50 = 2.08 ms`. Ya'ni 13 ms lik javobning atigi ~16% i baza; qolgani JWT,
+Prisma natijasini obyektga aylantirish (`Decimal`lar) va JSON yasash.
+
+Shundan kelib chiqqan qarorlar Faza 6 uchun:
+
+* Cache **~1.75 barobar** beradi, lekin foyda bazaning sekinligidan emas —
+  takrorlanadigan **protsessor ishidan** keladi (Node bitta oqimda).
+* Cache'da **JSON matni** saqlansin, obyekt emas — shunda `JSON.stringify`
+  ham tejaladi (o'lchangan 1.75 — pastki chegara).
+* Avval `Cache-Control` sarlavhalari: so'rov ilovaga umuman kirmaydi.
+* Menyu tuzilishi uzoq, stop-list qisqa (yoki umuman cache'siz) — ular
+  turli tezlikda o'zgaradi.
+* Cache faqat **ko'rsatish** uchun. Order narxi (Faza 7) har doim bazadan
+  qayta o'qiladi va `OrderItem` ga nusxa qilinadi.
+
 ### Hali yo'q
 
-* **Filial izolyatsiyasi hali yozilmagan** — JWT payload faqat `{ sub }`,
-  `tenantId`/`branchId` har so'rovda bazadan `JwtStrategy` orqali olinadi.
-  Roadmapdagi qaror: har bir service `AuthUser` ni qabul qiladi va
-  `where: { branchId: user.branchId }` ni **o'zi yozadi** (sehr yo'q).
-  Birinchi biznes-modulda shu qoidani boshidan qo'llang.
-* Biznes-modullar (menyu, stol, order, to'lov, ombor, xodim) — hech biri yo'q.
+* Biznes-modullar: stol/zal, order, to'lov, ombor, xodim — hali yo'q.
+* **Filial CRUD yo'q** (Faza 4). Shuning uchun yangi restoranga filialni hozircha
+  faqat seed yoki Prisma Studio orqali qo'shish mumkin.
 * Ombor, davomat, obuna va push uchun **sxemada model ham yo'q** — ular
   `ROADMAP.md` ning 2-bo'limida ta'riflangan.
 * Redis env o'zgaruvchilari bor, lekin paket o'rnatilmagan (Faza 6).
