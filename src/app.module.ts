@@ -5,14 +5,17 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule, minutes } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { CommonModule } from './common/common.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { envValidationSchema } from './config/env.validation';
 import { AuthModule } from './modules/auth/auth.module';
+import { MenuModule } from './modules/menu/menu.module';
 import { SubscriptionGuard } from './modules/platform/guards/subscription.guard';
 import { PlatformModule } from './modules/platform/platform.module';
+import { StorageModule } from './modules/storage/storage.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
@@ -30,8 +33,11 @@ import { PrismaModule } from './prisma/prisma.module';
     // Obuna muddatini har kuni tekshiruvchi cron uchun
     ScheduleModule.forRoot(),
     PrismaModule,
+    CommonModule,
+    StorageModule,
     AuthModule,
     PlatformModule,
+    MenuModule,
   ],
   controllers: [AppController],
   providers: [

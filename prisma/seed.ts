@@ -3,6 +3,7 @@ import {
   PrismaClient,
   Role,
   SubscriptionStatus,
+  Unit,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
@@ -170,10 +171,70 @@ async function main() {
     });
   }
 
+  // Demo menyu: kategoriya -> taomlar. Faza 3 ni test qilish uchun.
+  const MENU: { category: string; sortOrder: number; products: { name: string; price: string; description?: string; unit?: Unit; unitValue?: string }[] }[] = [
+    {
+      category: 'Salatlar',
+      sortOrder: 1,
+      products: [
+        { name: 'Achchiq-chuchuk', price: '18000', description: 'Pomidor, piyoz, achchiq qalampir' },
+        { name: 'Sezar', price: '32000' },
+      ],
+    },
+    {
+      category: 'Issiq taomlar',
+      sortOrder: 2,
+      products: [
+        { name: 'Osh', price: '35000', description: 'Toshkent oshi' },
+        { name: 'Lagmon', price: '30000' },
+        { name: 'Kabob', price: '22000', unit: Unit.PIECE, unitValue: '1' },
+        { name: 'Goʻsht', price: '145000', unit: Unit.KG, unitValue: '1' },
+      ],
+    },
+    {
+      category: 'Ichimliklar',
+      sortOrder: 3,
+      products: [
+        { name: 'Choy', price: '8000' },
+        { name: 'Cola 0.5', price: '12000', unit: Unit.ML, unitValue: '500' },
+      ],
+    },
+  ];
+
+  for (const group of MENU) {
+    const category =
+      (await prisma.category.findFirst({
+        where: { branchId: branch.id, name: group.category },
+      })) ??
+      (await prisma.category.create({
+        data: { branchId: branch.id, name: group.category, sortOrder: group.sortOrder },
+      }));
+
+    for (const item of group.products) {
+      const existing = await prisma.product.findFirst({
+        where: { categoryId: category.id, name: item.name },
+      });
+
+      if (!existing) {
+        await prisma.product.create({
+          data: {
+            categoryId: category.id,
+            name: item.name,
+            description: item.description,
+            price: item.price,
+            unit: item.unit ?? Unit.PIECE,
+            unitValue: item.unitValue ?? '1',
+          },
+        });
+      }
+    }
+  }
+
   console.log(`Tenant: ${tenant.name} (id=${tenant.id})`);
   console.log(`Branch: ${branch.name} (id=${branch.id})`);
   console.log(`Tariflar: ${PLANS.map((p) => p.name).join(', ')}`);
   console.log('Obuna: Basic, 1 yil, ACTIVE');
+  console.log(`Menyu: ${MENU.length} kategoriya, ${MENU.reduce((n, g) => n + g.products.length, 0)} taom`);
   console.log('');
   console.log('Email bilan kirish (parol):');
   console.log('  superadmin@smartresto.uz  SuperAdmin123');

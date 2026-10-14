@@ -23,6 +23,15 @@ export const envValidationSchema = Joi.object({
 
   ADMIN_API_KEY: Joi.string().optional(),
 
+  // Fayl saqlash (MinIO / S3). Lokalda docker-compose.yml dagi MinIO.
+  S3_ENDPOINT: Joi.string().uri().default('http://localhost:9200'),
+  S3_REGION: Joi.string().default('us-east-1'),
+  S3_ACCESS_KEY: Joi.string().default('minioadmin'),
+  S3_SECRET_KEY: Joi.string().default('minioadmin'),
+  S3_BUCKET: Joi.string().default('smart-resto'),
+  // Rasm havolasi shu manzil orqali quriladi (prodda CDN bo'lishi mumkin)
+  S3_PUBLIC_URL: Joi.string().uri().default('http://localhost:9200'),
+
   // Faza 6 (Redis) da majburiy bo'ladi, hozircha default bilan
   REDIS_HOST: Joi.string().default('localhost'),
   REDIS_PORT: Joi.number().port().default(6379),

@@ -7,7 +7,7 @@
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
     "target": "ES2021",
-    "types": ["node"],
+    "types": ["node", "express", "multer"],
     "sourceMap": true,
     "outDir": "./dist",
     "baseUrl": "./",
