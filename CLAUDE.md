@@ -65,6 +65,13 @@ src/
 │   │   ├── dto/
 │   │   ├── interfaces/      # AuthTokens, JwtPayload (faqat auth ishlatadi)
 │   │   └── strategies/      # jwt.strategy.ts
+│   ├── branch/              # Faza 4: filial -> zal -> stol + QR
+│   │   ├── branch.controller.ts / .service.ts   # filial CRUD + maxBranches
+│   │   ├── hall.controller.ts / .service.ts
+│   │   ├── table.controller.ts / .service.ts
+│   │   ├── table-status.service.ts   # status o'tishlarining yagona joyi
+│   │   ├── qr.service.ts             # QR havolasi va PNG
+│   │   └── dto/
 │   ├── menu/                # Faza 3: kategoriya, mahsulot, stop-list, menyu
 │   │   ├── category.controller.ts / .service.ts
 │   │   ├── product.controller.ts / .service.ts   # + rasm yuklash
@@ -82,6 +89,7 @@ src/
 │       ├── guards/          # SubscriptionGuard (APP_GUARD)
 │       └── dto/
 └── common/
+    ├── dto/                 # BranchScopeQueryDto (?branchId)
     ├── services/            # @Global() BranchScopeService
     ├── decorators/          # @Public(), @BypassTransform(), @Roles(), @CurrentUser(), @AllowExpired()
     ├── guards/              # JwtAuthGuard, RolesGuard
@@ -183,7 +191,7 @@ Sxema konventsiyalari (yangi model qo'shganda ham shunday davom eting):
   bo'lsa o'chiriladi (aks holda 409).
 * `StopList` — vaqtinchalik va filialga xos ("taom tugadi"), `isActive` esa
   doimiy. `@@unique([branchId, productId])` tufayli upsert xavfsiz.
-* `Role`, `Unit`, `SubscriptionStatus`, `InvoiceStatus` — Prisma enum.
+* `Role`, `Unit`, `SubscriptionStatus`, `InvoiceStatus`, `TableStatus` — Prisma enum.
   **Yangi modellarda status'ni boshidan enum qiling** (eski `String` maydonlar
   Faza 4/7/8 da enumga o'tkaziladi).
 * Obuna: `Plan` -> `Subscription` -> `TenantInvoice`. Uzaytirish **yangi qator**
@@ -205,7 +213,8 @@ Yagona haqiqat manbai — `src/config/env.validation.ts` (Joi):
 `THROTTLE_TTL_SECONDS` (default 60) va `THROTTLE_LIMIT` (default 100) —
 global rate-limit, `REDIS_HOST`, `REDIS_PORT`,
 `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`,
-`S3_PUBLIC_URL` (lokalda `docker-compose.yml` dagi MinIO, port 9200).
+`S3_PUBLIC_URL` (lokalda `docker-compose.yml` dagi MinIO, port 9200),
+`QR_BASE_URL` (stol QR kodi shu manzilga ishora qiladi).
 
 `.env` git'ga tushmaydi. Yangi o'zgaruvchi qo'shsangiz, Joi sxemasini **va**
 `.env.example` ni birga yangilang.
@@ -222,8 +231,8 @@ global rate-limit, `REDIS_HOST`, `REDIS_PORT`,
 ## Loyihaning hozirgi holati
 
 To'liq reja: **`docs/ROADMAP.md`** (git'ga tushmaydi, `.gitignore` da).
-13 faza, ~7-9 hafta. **Faza 0, 1, 2 va 3 tugagan**. Navbatda — Faza 4
-(zal va stollar + QR token).
+13 faza, ~7-9 hafta. **Faza 0, 1, 2, 3 va 4 tugagan**. Navbatda — Faza 5
+(mijozning QR oqimi).
 
 ### Tayyor (Faza 0)
 
@@ -335,11 +344,43 @@ Shundan kelib chiqqan qarorlar Faza 6 uchun:
 * Cache faqat **ko'rsatish** uchun. Order narxi (Faza 7) har doim bazadan
   qayta o'qiladi va `OrderItem` ga nusxa qilinadi.
 
+### Tayyor (Faza 4)
+
+* `BranchModule` (`src/modules/branch/`) — 16 endpoint:
+  `GET/POST /branches`, `GET/PATCH/DELETE /branches/:id`,
+  `GET/POST /halls`, `PATCH/DELETE /halls/:id`,
+  `GET/POST /tables`, `GET/PATCH/DELETE /tables/:id`,
+  `GET /tables/:id/qr`, `PATCH /tables/:id/status`.
+* Ierarxiya: **filial -> zal -> stol**. Stolning filiali **zali orqali**
+  aniqlanadi (mahsulotning filiali kategoriyasi orqali aniqlangani kabi),
+  shuning uchun `POST /tables` da `branchId` yo'q.
+* `BranchService` `BranchScopeService` ni **ishlatmaydi**: u filial *ichidagi*
+  ma'lumot uchun. Filialning o'zi bir pog'ona yuqori — doira `tenantId`.
+  MANAGER tokenida `branchId` bor, shuning uchun u faqat o'z filialini ko'radi.
+* **`maxBranches` endi kuchda**: `SubscriptionService.assertCanAddBranch()`
+  `POST /branches` da chaqiriladi. Qoida obuna ma'lumotining yonida turadi,
+  filial moduli tarif haqida hech narsa bilmaydi. `maxUsers` — Faza 10 da.
+* `TableStatus` enum (`FREE`, `OCCUPIED`, `RESERVED`, `BILL_REQUESTED`).
+  **Qo'lda faqat `FREE` va `RESERVED` qo'yiladi** — `OCCUPIED` va
+  `BILL_REQUESTED` ortida haqiqiy buyurtma turishi kerak, ularni Faza 5/7
+  dagi order oqimi `TableStatusService.applyOrderEvent(tableId, status, tx)`
+  orqali qo'yadi (`tx` — chaqiruvchining tranzaksiyasi).
+  Ochiq buyurtmasi bor stolni qo'lda `FREE` qilib bo'lmaydi.
+* `qrCodeToken` — `randomUUID()`, **serverda** yaratiladi va hech qachon
+  o'zgartirilmaydi: u allaqachon stolga yopishtirilgan qog'ozda chop etilgan.
+  `GET /tables/:id/qr` PNG qaytaradi (`@BypassTransform()` + `StreamableFile`),
+  QR ichida to'liq havola: `<QR_BASE_URL>/<token>`.
+* O'chirish qoidalari: filial va stol — **buyurtma tarixi bo'lmasa**
+  (`Order -> Branch/Table` bog'lanishi `Cascade`); zal — **bo'sh bo'lsa**.
+* Migration `Table.status` ni `DROP COLUMN` bilan emas, `ALTER COLUMN ... USING`
+  bilan o'tkazadi — Prisma avtomatik yaratgan variant ma'lumotni yo'qotardi.
+* `@@unique([branchId, name])` zalda, `@@unique([hallId, tableNumber])` stolda:
+  takrorlanishni kod emas, **baza** to'xtatadi (parallel so'rovlar uchun).
+* Seed: "Asosiy zal" + 4 ta stol.
+
 ### Hali yo'q
 
-* Biznes-modullar: stol/zal, order, to'lov, ombor, xodim — hali yo'q.
-* **Filial CRUD yo'q** (Faza 4). Shuning uchun yangi restoranga filialni hozircha
-  faqat seed yoki Prisma Studio orqali qo'shish mumkin.
+* Biznes-modullar: order, to'lov, ombor, xodim — hali yo'q.
 * Ombor, davomat, obuna va push uchun **sxemada model ham yo'q** — ular
   `ROADMAP.md` ning 2-bo'limida ta'riflangan.
 * Redis env o'zgaruvchilari bor, lekin paket o'rnatilmagan (Faza 6).
