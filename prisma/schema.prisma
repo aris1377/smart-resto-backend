@@ -280,14 +280,17 @@ model StopList {
 // ==========================================
 
 model Order {
-  id          Int      @id @default(autoincrement())
-  branchId    Int      @map("branch_id")
-  tableId     Int      @map("table_id")
-  waiterId    Int?     @map("waiter_id")
-  source      String // pos_waiter, qr_customer
-  status      String   @default("new") // new, cooking, served, paid, canceled
-  totalAmount Decimal  @default(0.00) @map("total_amount") @db.Decimal(12, 2)
-  createdAt   DateTime @default(now()) @map("created_at")
+  id             Int      @id @default(autoincrement())
+  branchId       Int      @map("branch_id")
+  tableId        Int      @map("table_id")
+  waiterId       Int?     @map("waiter_id")
+  source         String // pos_waiter, qr_customer
+  status         String   @default("new") // new, cooking, served, paid, canceled
+  totalAmount    Decimal  @default(0.00) @map("total_amount") @db.Decimal(12, 2)
+  // QR orqali kelgan mijozning brauzerdagi UUID'si. Shaxsni aniqlamaydi —
+  // faqat "shu brauzer shu buyurtmaning egasi" ekanini isbotlaydi
+  guestSessionId String?  @map("guest_session_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
 
   branch     Branch      @relation(fields: [branchId], references: [id], onDelete: Cascade)
   table      Table       @relation(fields: [tableId], references: [id], onDelete: Cascade)
@@ -295,6 +298,8 @@ model Order {
   orderItems OrderItem[]
   payments   Payment[]
 
+  // Har bir QR so'rovi stolning ochiq buyurtmasini qidiradi
+  @@index([tableId, status])
   @@map("orders")
 }
 
