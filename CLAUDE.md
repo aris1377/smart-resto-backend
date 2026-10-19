@@ -65,6 +65,13 @@ src/
 │   │   ├── dto/
 │   │   ├── interfaces/      # AuthTokens, JwtPayload (faqat auth ishlatadi)
 │   │   └── strategies/      # jwt.strategy.ts
+│   ├── guest/               # Faza 5: QR orqali kelgan mehmon (A qatlam)
+│   │   ├── guest-menu.controller.ts / .service.ts    # GET /public/qr/:token
+│   │   ├── guest-order.controller.ts / .service.ts   # /public/orders
+│   │   ├── guest-table.service.ts   # QR token -> stol/filial/restoran
+│   │   ├── guest.constants.ts       # status, limit va sarlavha nomlari
+│   │   ├── decorators/              # @GuestSession()
+│   │   └── dto/
 │   ├── branch/              # Faza 4: filial -> zal -> stol + QR
 │   │   ├── branch.controller.ts / .service.ts   # filial CRUD + maxBranches
 │   │   ├── hall.controller.ts / .service.ts
@@ -231,8 +238,8 @@ global rate-limit, `REDIS_HOST`, `REDIS_PORT`,
 ## Loyihaning hozirgi holati
 
 To'liq reja: **`docs/ROADMAP.md`** (git'ga tushmaydi, `.gitignore` da).
-13 faza, ~7-9 hafta. **Faza 0, 1, 2, 3 va 4 tugagan**. Navbatda — Faza 5
-(mijozning QR oqimi).
+13 faza, ~7-9 hafta. **Faza 0, 1, 2, 3, 4 va 5 tugagan**. Navbatda — Faza 6
+(real-time va push).
 
 ### Tayyor (Faza 0)
 
@@ -378,9 +385,57 @@ Shundan kelib chiqqan qarorlar Faza 6 uchun:
   takrorlanishni kod emas, **baza** to'xtatadi (parallel so'rovlar uchun).
 * Seed: "Asosiy zal" + 4 ta stol.
 
+### Tayyor (Faza 5)
+
+* `GuestModule` (`src/modules/guest/`) — **A qatlam**, 5 endpoint, hammasi
+  `@Public()`: `GET /public/qr/:token`, `POST /public/orders`,
+  `GET /public/orders/:id`, `POST /public/orders/:id/items`,
+  `POST /public/orders/:id/request-bill`.
+* **Mijoz anonim**: ro'yxatdan o'tmaydi, SMS yo'q. Brauzer bir marta UUID v4
+  yasaydi, `localStorage` da saqlaydi va har so'rovda `X-Guest-Session`
+  sarlavhasida yuboradi (`@GuestSession()` dekoratori tekshiradi). U
+  `Order.guestSessionId` ga yoziladi va "shu brauzer shu buyurtmaning egasi"
+  degan yagona isbot — begona buyurtma uchun **404** (403 emas).
+* **Narxga mijozdan ishonilmaydi**: `OrderItemInputDto` da `price` maydoni
+  ataylab yo'q (global `forbidNonWhitelisted` tufayli yuborilsa 400),
+  summa `GuestOrderService.priceItems()` da bazadagi narxdan hisoblanadi.
+* **Bir stolda bitta ochiq buyurtma**: tranzaksiya ichida stol qatori
+  `SELECT ... FOR UPDATE` bilan qulflanadi, shundan keyingina "ochiq buyurtma
+  bormi?" tekshiriladi. Ya'ni ikki parallel so'rov ikkita buyurtma ochib
+  yubora olmaydi. Ochiq buyurtma o'sha mehmonniki bo'lsa — taomlar unga
+  qo'shiladi (sahifa yangilangandan keyin ikkinchi buyurtma ochilmaydi),
+  boshqa mehmonning bo'lsa — **409** "ofitsiantni chaqiring".
+* Ochiq status (`new`, `cooking`, `served`) — `guest.constants.ts` da bir joyda
+  (`Order.status` hali `String`, Faza 7 da enumga o'tadi). Yopilgan buyurtmaga
+  taom qo'shilmaydi (409), lekin `GET` bilan ko'rish mumkin.
+* **Hisob so'ralgandan keyin** (`request-bill`) qo'shimcha buyurtma qabul
+  qilinmaydi: kassir summani tayyorlayapti, u qo'lida o'zgarib ketmasligi kerak.
+  Tugma takror bosilsa xato bermaydi (idempotent).
+* Stol statusini mijoz oqimi o'zi yozmaydi — Faza 4 dagi
+  `TableStatusService.applyOrderEvent(..., tx)` ni **o'z tranzaksiyasi bilan**
+  chaqiradi: buyurtma ochilsa `OCCUPIED`, hisob so'ralsa `BILL_REQUESTED`.
+* Obuna: `@Public()` endpointda `req.user` yo'q, shuning uchun tekshiruv
+  service ichida (`GuestTableService.assertAcceptsOrders`). `assertActive()`
+  ning 402 xabari xodim uchun yozilgan, mehmonga restoranning platforma bilan
+  hisob-kitobi ko'rinmasligi kerak — shuning uchun u umumiy **503** ga
+  almashtiriladi. `request-bill` obunani umuman tekshirmaydi: ovqatlanib
+  bo'lgan mehmon hisobsiz qolmasligi kerak.
+* Stop-list: taom menyudan **o'chmaydi**, `isAvailable: false` bilan ko'rinadi;
+  shunga qaramay buyurtma qilinsa — **409** va taom nomi aytiladi.
+* Rate-limit ochiq endpointlarda alohida (IP bo'yicha, `guest.constants.ts`):
+  o'qish **60/daq**, yozish **20/daq**. Restoran Wi-Fi'da hamma mehmon bitta
+  IP'dan chiqishi mumkin, shuning uchun o'qish limiti past emas.
+* Sxema: `Order.guestSessionId` (`@db.Uuid`, nullable — POS buyurtmasida
+  bo'lmaydi) va `@@index([tableId, status])` (har bir QR so'rovi stolning
+  ochiq buyurtmasini qidiradi).
+* **Avtomatik test: 68/68 o'tdi** — QR menyu, buyurtma, takror bosish,
+  qo'shimcha taom, begona sessiya, stop-list, hisob so'rash, yopilgan
+  buyurtma va 429 limiti.
+
 ### Hali yo'q
 
-* Biznes-modullar: order, to'lov, ombor, xodim — hali yo'q.
+* Ofitsiant/kassir buyurtmasi (POS), to'lov, ombor, xodim boshqaruvi —
+  hali yo'q. Mijozning QR buyurtmasi esa ishlaydi (Faza 5).
 * Ombor, davomat, obuna va push uchun **sxemada model ham yo'q** — ular
   `ROADMAP.md` ning 2-bo'limida ta'riflangan.
 * Redis env o'zgaruvchilari bor, lekin paket o'rnatilmagan (Faza 6).
