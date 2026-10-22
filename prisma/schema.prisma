@@ -26,6 +26,7 @@ enum Unit {
   GRAM // gramm (Portsiya kartoshka fri - 200g)
   LITER // litr (Yog', Sharbat)
   ML // millilitr (200ml sous)
+  PORTION // portsiya (Osh, Lag'mon, Manti) — "dona" emas: menyuda ikkalasi yonma-yon turadi
 }
 
 enum SubscriptionStatus {
@@ -47,13 +48,22 @@ enum TableStatus {
   BILL_REQUESTED // mijoz hisob so'radi
 }
 
+enum DevicePlatform {
+  ANDROID
+  IOS
+  WEB // brauzer bildirishnomasi
+}
+
 // ==========================================
 // 2. TENANCY & USERS (Abonentlar va Foydalanuvchilar)
 // ==========================================
 
 model Tenant {
-  id        Int      @id @default(autoincrement())
-  name      String   @map("name")
+  id   Int     @id @default(autoincrement())
+  name String  @map("name")
+  // Platforma ro'yxatida restoran shahri bilan ko'rsatiladi ("ID 1 · Toshkent")
+  city String? @map("city")
+
   logoUrl   String?  @map("logo_url")
   isActive  Boolean  @default(true) @map("is_active") // shartnoma bekor qilinsa false
   createdAt DateTime @default(now()) @map("created_at")
@@ -105,6 +115,7 @@ model User {
   branch        Branch?        @relation(fields: [branchId], references: [id], onDelete: SetNull)
   orders        Order[]
   refreshTokens RefreshToken[]
+  deviceTokens  DeviceToken[]
 
   @@index([tenantId])
   @@index([branchId])
@@ -350,4 +361,25 @@ model FiscalReceipt {
   payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
 
   @@map("fiscal_receipts")
+}
+
+// ==========================================
+// 7. NOTIFICATIONS (Push bildirishnomalar)
+// ==========================================
+
+model DeviceToken {
+  id        Int            @id @default(autoincrement())
+  userId    Int            @map("user_id")
+  // FCM registratsiya tokeni. Qurilmaga tegishli, foydalanuvchiga emas:
+  // bitta planshetda ofitsiant chiqib kassir kirsa, token yangi egasiga o'tadi
+  token     String         @unique @map("token")
+  platform  DevicePlatform
+  isActive  Boolean        @default(true) @map("is_active")
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isActive])
+  @@map("device_tokens")
 }
