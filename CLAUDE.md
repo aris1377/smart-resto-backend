@@ -32,6 +32,7 @@ pnpm db:studio        # brauzerda baza ko'ruvchi
 pnpm db:seed          # demo tenant/filial/xodimlar/menyu (prisma/seed.ts, idempotent)
 
 docker compose up -d minio   # rasm saqlash uchun MinIO (9200 API, 9201 konsol)
+docker compose up -d redis   # Socket.IO xonalari uchun Redis (6379)
 ```
 
 > `pnpm db:migrate` (`prisma migrate dev`) **interaktiv** — ba'zi o'zgarishlarda
@@ -85,6 +86,193 @@ src/
 │   │   ├── stop-list.controller.ts / .service.ts
 │   │   ├── menu.controller.ts / .service.ts      # GET /menu
 │   │   └── dto/
+│   ├── realtime/            # Faza 6: WebSocket (Socket.IO + Redis)
+│   │   ├── realtime.gateway.ts      # ulanish: JWT -> rol -> xona
+│   │   ├── realtime.service.ts      # boshqa modullar shuni chaqiradi
+│   │   ├── realtime.constants.ts    # xona, hodisa va handshake nomlari
+│   │   └── redis-io.adapter.ts      # xonalarni instansiyalar orasida ulashish
+│   ├── notification/        # Faza 6: FCM push + BullMQ navbati
+│   │   ├── device.controller.ts / .service.ts  # POST/DELETE /devices
+│   │   ├── push.service.ts          # boshqa modullar shuni chaqiradi
+│   │   ├── push.processor.ts        # navbatdagi ishni bajaradi (worker)
+│   │   ├── firebase.service.ts      # FCM transporti
+│   │   └── notification.constants.ts
+│   ├── storage/             # @Global() StorageService — S3/MinIO
+│   └── platform/            # C qatlam: faqat SUPER_ADMIN
+│       ├── platform.controller.ts
+│       ├── platform.service.ts      # tenant CRUD, statistika
+│       ├── plan.service.ts          # tarif CRUD
+│       ├── subscription.controller.ts  # GET /subscription/me (B qatlam)
+│       ├── subscription.service.ts  # obuna berish + assertActive()
+│       ├── subscription.cron.ts     # kunlik muddat tekshiruvi
+│       ├── guards/          # SubscriptionGuard (APP_GUARD)
+│       └── dto/
+└── common/
+    ├── dto/                 # BranchScopeQueryDto (?branchId)
+    ├── services/            # @Global() BranchScopeService
+    ├── decorators/          # @Public(), @BypassTransform(), @Roles(), @CurrentUser(), @AllowExpired(), @IsNonNegativeDecimal()
+    ├── guards/              # JwtAuthGuard, RolesGuard
+    ├── filters/             # AllExceptionsFilter
+    ├── interceptors/        # TransformInterceptor
+    └── interfaces/          # AuthUser
+```
+
+Yangi biznes-modul `src/modules/<feature>/` da yaratiladi. `common/` faqat
+hamma modul ishlatadigan narsalar uchun (`AuthUser`, guardlar, dekoratorlar);
+bitta modulga tegishli tip o'sha modulning `interfaces/` papkasida qoladi.
+
+Global provayderlar `app.module.ts` da `APP_FILTER` / `APP_GUARD` / `APP_INTERCEPTOR`
+orqali ulanadi. `APP_GUARD` tartibi **muhim**: `ThrottlerGuard` -> `JwtAuthGuard`
+-> `RolesGuard` -> `SubscriptionGuard` (arzon tekshiruv oldinda; oxirgisi
+`req.user.tenantId` ga muhtoj).
+
+**Filial doirasi (eng muhim qoida)** — restoran ma'lumoti bilan ishlaydigan
+har bir service `BranchScopeService` dan boshlanadi:
+
+* `resolve(user, dto.branchId)` — ro'yxat va yaratishda. Xodim uchun tokendagi
+  filial; OWNER uchun so'ralgan filial, lekin u shu tenantga tegishliligi
+  tekshiriladi (begona filial — **404**, 403 emas: mavjudligini ham oshkor
+  qilmaymiz). OWNER `branchId` bermasa — **400**.
+* `assertAccess(user, entity.branchId)` — mavjud yozuv ustidagi amallarda
+  (`PATCH /categories/5`), filial yozuvning o'zidan olinadi.
+
+* `assertBranchBound(user)` — doira **roldan** boshlanadi, `branchId` bor-yoʻqligidan
+  emas. Sxemada `User.branchId` filial oʻchganda `SetNull` boʻladi; agar qaror
+  faqat `branchId` ga qarab qabul qilinsa, filiali oʻchirilgan menejer OWNER
+  kabi qabul qilinib, restoranning **boshqa filiallariga** kirib qolardi
+  (oʻqish ham, yozish ham — 2026-10-21 da jonli isbotlangan). Endi OWNER'dan
+  boshqa rol filialsiz boʻlsa — **403**. `BranchService` ham shu funksiyani
+  chaqiradi.
+
+Sehr yo'q: `where: { branchId }` har bir service'da ko'rinib turadi.
+
+**Pagination konventsiyasi** — ro'yxat qaytaradigan har bir endpoint
+`{ items, meta: { page, limit, total, totalPages } }` qaytaradi, so'rov esa
+`?page=&limit=` oladi (`ListTenantsDto` namuna).
+
+### Global konventsiyalar
+
+**Response formati** — `TransformInterceptor` barcha muvaffaqiyatli javoblarni
+o'raydi, controller faqat toza ma'lumot (yoki `{ message, data }`) qaytarsin:
+
+```json
+{ "success": true, "statusCode": 200, "message": "Success", "data": {}, "timestamp": "..." }
+```
+
+**Xatolik formati** — `AllExceptionsFilter` global, qo'lda try/catch bilan
+javob shakllantirmang, oddiy `HttpException` (`NotFoundException` va h.k.) tashlang:
+
+```json
+{ "success": false, "statusCode": 404, "path": "/...", "message": "...", "timestamp": "..." }
+```
+
+**Validatsiya** — global `ValidationPipe` `whitelist: true`,
+`forbidNonWhitelisted: true`, `transform: true` bilan yoqilgan. Ya'ni DTO'da
+e'lon qilinmagan har qanday maydon **400** xatolik beradi. Har bir endpoint
+uchun `class-validator` dekoratorli DTO yozish majburiy.
+
+**Pul va miqdor maydonlari** — `@IsNonNegativeDecimal(xabar)`
+(`src/common/decorators/`), `@IsDecimal()` **emas**: u "-5" ni toʻgʻri oʻnlik
+son deb bilib, manfiy narxni oʻtkazib yuborardi (2026-10-21 da topilgan).
+Qoida: `^d+(.d{1,2})?# CLAUDE.md
+
+Bu fayl ushbu repozitoriyada ishlayotgan Claude Code uchun yo'riqnoma.
+
+## Loyiha haqida
+
+**smart-resto-backend** — restoranlar uchun ko'p ijarali (multi-tenant) SaaS backend.
+POS (ofitsiant/kassir), QR orqali mijoz buyurtmasi, oshxona ekrani, to'lov va
+fiskallashtirish oqimlarini qamrab oladi.
+
+Texnologiyalar: **NestJS 11**, **Prisma 6.4.1 + PostgreSQL**, **Passport JWT**, **pnpm**.
+
+## Buyruqlar
+
+Paket menejeri — **pnpm** (`pnpm-lock.yaml` mavjud, npm/yarn ishlatilmasin).
+
+```bash
+pnpm start:dev        # watch rejimida ishga tushirish
+pnpm build            # nest build -> dist/
+pnpm start:prod       # node dist/main
+pnpm lint             # eslint --fix (type-checked qoidalar yoqilgan)
+pnpm format           # prettier --write
+pnpm test             # jest (hozircha birorta .spec.ts yo'q)
+pnpm test -- src/modules/auth/auth.service.spec.ts   # bitta fayl
+pnpm test -- -t "login"                      # nomi mos bitta test
+
+pnpm db:generate      # prisma generate
+pnpm db:migrate       # prisma migrate dev  -- nom bilan: --name <aniq_nom>
+pnpm db:deploy        # prisma migrate deploy (PRODDA, hech narsa so'ramaydi)
+pnpm db:reset         # bazani tozalab, migrationlarni qayta qo'llaydi
+pnpm db:studio        # brauzerda baza ko'ruvchi
+pnpm db:seed          # demo tenant/filial/xodimlar/menyu (prisma/seed.ts, idempotent)
+
+docker compose up -d minio   # rasm saqlash uchun MinIO (9200 API, 9201 konsol)
+docker compose up -d redis   # Socket.IO xonalari uchun Redis (6379)
+```
+
+> `pnpm db:migrate` (`prisma migrate dev`) **interaktiv** — ba'zi o'zgarishlarda
+> tasdiq so'raydi. Agar terminal interaktiv bo'lmasa, muqobil yo'l:
+> `prisma migrate diff --from-schema-datasource ... --to-schema-datamodel ... --script`
+> bilan SQL olinadi, yangi migration papkasiga yoziladi va `pnpm db:deploy` qo'llaydi.
+
+> ⚠️ `prisma/migrations/` dagi fayllarni **hech qachon qo'lda tahrirlamang yoki
+> o'chirmang** — ular git'da saqlanadi va prodda ketma-ket qo'llanadi. Sxemani
+> o'zgartirish uchun `schema.prisma` ni tahrirlab, **yangi** migration yarating.
+
+Jest konfiguratsiyasi `package.json` ichida: `rootDir: "src"`, `testRegex:
+".*\\.spec\\.ts$"`. Ya'ni test fayllari **`src/` ichida, tekshirilayotgan
+faylning yonida** turadi (`test/` papkasi umuman yo'q). `pnpm test:e2e`
+`./test/jest-e2e.json` ni izlaydi — u fayl hali yaratilmagan, shuning uchun
+buyruq hozircha ishlamaydi.
+
+## Arxitektura
+
+```
+src/
+├── main.ts                  # bootstrap: helmet, prefix+versioning, pipe, CORS, Swagger
+├── app.module.ts            # ildiz modul: ConfigModule, Throttler, Prisma, Auth
+├── config/env.validation.ts # .env uchun Joi sxemasi
+├── prisma/                  # @Global() PrismaModule + PrismaService
+├── modules/                 # biznes-modullar shu yerda
+│   ├── auth/
+│   │   ├── auth.controller.ts
+│   │   ├── auth.service.ts
+│   │   ├── hash.service.ts  # bcrypt (parol/PIN) + sha256 (refresh token)
+│   │   ├── dto/
+│   │   ├── interfaces/      # AuthTokens, JwtPayload (faqat auth ishlatadi)
+│   │   └── strategies/      # jwt.strategy.ts
+│   ├── guest/               # Faza 5: QR orqali kelgan mehmon (A qatlam)
+│   │   ├── guest-menu.controller.ts / .service.ts    # GET /public/qr/:token
+│   │   ├── guest-order.controller.ts / .service.ts   # /public/orders
+│   │   ├── guest-table.service.ts   # QR token -> stol/filial/restoran
+│   │   ├── guest.constants.ts       # status, limit va sarlavha nomlari
+│   │   ├── decorators/              # @GuestSession()
+│   │   └── dto/
+│   ├── branch/              # Faza 4: filial -> zal -> stol + QR
+│   │   ├── branch.controller.ts / .service.ts   # filial CRUD + maxBranches
+│   │   ├── hall.controller.ts / .service.ts
+│   │   ├── table.controller.ts / .service.ts
+│   │   ├── table-status.service.ts   # status o'tishlarining yagona joyi
+│   │   ├── qr.service.ts             # QR havolasi va PNG
+│   │   └── dto/
+│   ├── menu/                # Faza 3: kategoriya, mahsulot, stop-list, menyu
+│   │   ├── category.controller.ts / .service.ts
+│   │   ├── product.controller.ts / .service.ts   # + rasm yuklash
+│   │   ├── stop-list.controller.ts / .service.ts
+│   │   ├── menu.controller.ts / .service.ts      # GET /menu
+│   │   └── dto/
+│   ├── realtime/            # Faza 6: WebSocket (Socket.IO + Redis)
+│   │   ├── realtime.gateway.ts      # ulanish: JWT -> rol -> xona
+│   │   ├── realtime.service.ts      # boshqa modullar shuni chaqiradi
+│   │   ├── realtime.constants.ts    # xona, hodisa va handshake nomlari
+│   │   └── redis-io.adapter.ts      # xonalarni instansiyalar orasida ulashish
+│   ├── notification/        # Faza 6: FCM push + BullMQ navbati
+│   │   ├── device.controller.ts / .service.ts  # POST/DELETE /devices
+│   │   ├── push.service.ts          # boshqa modullar shuni chaqiradi
+│   │   ├── push.processor.ts        # navbatdagi ishni bajaradi (worker)
+│   │   ├── firebase.service.ts      # FCM transporti
+│   │   └── notification.constants.ts
 │   ├── storage/             # @Global() StorageService — S3/MinIO
 │   └── platform/            # C qatlam: faqat SUPER_ADMIN
 │       ├── platform.controller.ts
@@ -149,7 +337,8 @@ javob shakllantirmang, oddiy `HttpException` (`NotFoundException` va h.k.) tashl
 **Validatsiya** — global `ValidationPipe` `whitelist: true`,
 `forbidNonWhitelisted: true`, `transform: true` bilan yoqilgan. Ya'ni DTO'da
 e'lon qilinmagan har qanday maydon **400** xatolik beradi. Har bir endpoint
-uchun `class-validator` dekoratorli DTO yozish majburiy.
+ — manfiy emas, koʻpi bilan 2 kasr, matn. `"0"`
+ruxsat etiladi (bepul taom, demo obuna).
 
 **Prisma** — `PrismaModule` `@Global()`, shuning uchun uni har bir modulga
 import qilish shart emas, faqat konstruktorda `private readonly prisma: PrismaService`
@@ -194,13 +383,33 @@ Sxema konventsiyalari (yangi model qo'shganda ham shunday davom eting):
   **kategoriyasi orqali** aniqlanadi (`where: { category: { branchId } }`).
 * `Product.isActive: false` — menyudan olib qo'yish. **Hard delete qilinmaydi**:
   `OrderItem -> Product` bog'lanishi `Cascade`, ya'ni o'chirish sotilgan
-  taomlarni order tarixidan yechib yuborardi. Kategoriya esa faqat **bo'sh**
-  bo'lsa o'chiriladi (aks holda 409).
+  taomlarni order tarixidan yechib yuborardi.
+* **Kategoriya oʻchirish uch bosqichli tekshiruv** (faqat "boʻshmi?" emas):
+  **faol** mahsuloti boʻlsa — 409; menyudan olib qoʻyilgan, lekin **sotilgan**
+  taomi boʻlsa — 409 (order tarixi yoʻqolardi); qolgan holatda kategoriya
+  oʻchadi va **sotilmagan yashirin taomlar u bilan birga ketadi**
+  (`{ id, removedProducts }`). Oldin oddiy `count()` edi: mahsulot hech
+  qachon hard delete qilinmagani uchun bir marta taom qoʻshilgan kategoriyani
+  **umrbod** oʻchirib boʻlmasdi (2026-10-21).
 * `StopList` — vaqtinchalik va filialga xos ("taom tugadi"), `isActive` esa
   doimiy. `@@unique([branchId, productId])` tufayli upsert xavfsiz.
-* `Role`, `Unit`, `SubscriptionStatus`, `InvoiceStatus`, `TableStatus` — Prisma enum.
+* `DeviceToken` — push uchun qurilma tokeni. `token` **unique**: u qurilmaga
+  tegishli, foydalanuvchiga emas. Bitta planshetda ofitsiant chiqib kassir
+  kirsa, `upsert` o'sha qatorning `userId` sini almashtiradi (yangi qator
+  ochilmaydi), aks holda kassir ofitsiantning xabarlarini olib yurardi.
+  O'chirish `isActive: false` orqali — `RefreshToken.revokedAt` bilan bir uslub.
+* `Role`, `Unit`, `SubscriptionStatus`, `InvoiceStatus`, `TableStatus`,
+  `DevicePlatform` — Prisma enum.
   **Yangi modellarda status'ni boshidan enum qiling** (eski `String` maydonlar
   Faza 4/7/8 da enumga o'tkaziladi).
+* `Unit.PORTION` — "portsiya", `PIECE` ("dona") dan **alohida** qiymat.
+  Dizayndagi menyu jadvalining "Birlik" ustunida ikkalasi yonma-yon turadi
+  (Manti → Portsiya, Somsa → Dona), shuning uchun bittasi ikkinchisini
+  qoplamaydi. Migration `add_portion_unit` — faqat `ALTER TYPE ... ADD VALUE`,
+  mavjud yozuvlar tegilmagan.
+* `Tenant.city` — platforma ro'yxatida nom ostida ko'rsatiladi
+  ("ID 1 · Toshkent"). Nullable: eski restoranlarda bo'sh,
+  `PATCH /platform/tenants/:id` bilan to'ldiriladi.
 * Obuna: `Plan` -> `Subscription` -> `TenantInvoice`. Uzaytirish **yangi qator**
   yaratadi (to'lov tarixi), hozirgi obuna = `expiresAt` eng kattasi.
   `Tenant.isActive` obunadan alohida: u shartnoma holati.
@@ -218,10 +427,14 @@ Yagona haqiqat manbai — `src/config/env.validation.ts` (Joi):
 `JWT_SECRET` (min 32 belgi), `JWT_EXPIRES_IN` (default `15m`),
 `REFRESH_TOKEN_EXPIRES_DAYS` (default 7), `ADMIN_API_KEY`,
 `THROTTLE_TTL_SECONDS` (default 60) va `THROTTLE_LIMIT` (default 100) —
-global rate-limit, `REDIS_HOST`, `REDIS_PORT`,
+global rate-limit, `REDIS_HOST`, `REDIS_PORT` (Faza 6 dan boshlab **ishlatiladi**
+— Redis ishlamasa ilova ko'tarilmaydi),
 `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`,
 `S3_PUBLIC_URL` (lokalda `docker-compose.yml` dagi MinIO, port 9200),
-`QR_BASE_URL` (stol QR kodi shu manzilga ishora qiladi).
+`QR_BASE_URL` (stol QR kodi shu manzilga ishora qiladi),
+`FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`
+(FCM service account; **uchalasi birga** bo'lishi shart — Joi `.and()` bilan
+bog'langan. Umuman berilmasa push o'chiq rejimda ishlaydi, ilova ko'tariladi).
 
 `.env` git'ga tushmaydi. Yangi o'zgaruvchi qo'shsangiz, Joi sxemasini **va**
 `.env.example` ni birga yangilang.
@@ -238,8 +451,10 @@ global rate-limit, `REDIS_HOST`, `REDIS_PORT`,
 ## Loyihaning hozirgi holati
 
 To'liq reja: **`docs/ROADMAP.md`** (git'ga tushmaydi, `.gitignore` da).
-13 faza, ~7-9 hafta. **Faza 0, 1, 2, 3, 4 va 5 tugagan**. Navbatda — Faza 6
-(real-time va push).
+13 faza, ~7-9 hafta. **Faza 0, 1, 2, 3, 4, 5 va 6 tugagan.**
+Faza 2 ustiga qo'shimcha: platforma "Restoranlar" ekrani uchun kerak bo'lgan
+maydonlar, filtrlar va `GET invoices` yozildi (dizayn bo'yicha).
+Navbatda — Faza 7 (order boshqaruvi, POS va KDS).
 
 ### Tayyor (Faza 0)
 
@@ -265,6 +480,12 @@ To'liq reja: **`docs/ROADMAP.md`** (git'ga tushmaydi, `.gitignore` da).
   `POST /auth/login-pin`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me`.
   `/auth/me` dan boshqa hammasi `@Public()`, login endpointlarida
   `@Throttle` bilan daqiqasiga 5 ta urinish.
+* **`GET /auth/me` foydalanuvchi ustiga `tenant` va `branch` ni qoʻshadi**
+  (nomi, shahri, logotipi; `tenant.isActive` — bloklanganmi). Bu maydonlar
+  `AuthUser` ga **qoʻshilmagan**: `req.user` har bir soʻrovda bazadan
+  oʻqiladi, ikki join esa faqat shu endpointga kerak. Frontendning yon
+  menyusidagi restoran nomi va menejerning filiali shundan keladi.
+  `login` javobidagi `user` da ular yoʻq — faqat 7 ta asosiy maydon.
 * **PIN login ikki bosqichli** — bcrypt tasodifiy tuz ishlatadi, ya'ni PIN hashini
   qidirib bo'lmaydi. Avval xodim tanlanadi, keyin bitta solishtirish qilinadi.
 * **Refresh token rotatsiyasi** — bazada faqat sha256 hash, ishlatilgan token
@@ -279,8 +500,31 @@ To'liq reja: **`docs/ROADMAP.md`** (git'ga tushmaydi, `.gitignore` da).
 
 * `PlatformModule` — `/api/v1/platform/*`, klass darajasida `@Roles(SUPER_ADMIN)`:
   `GET tenants` (pagination+filtr+qidiruv), `GET tenants/:id`, `POST tenants`,
-  `PATCH tenants/:id/status`, `POST tenants/:id/subscription`,
-  `GET/POST plans`, `PATCH plans/:id`, `GET stats`.
+  `PATCH tenants/:id`, `PATCH tenants/:id/status`,
+  `POST tenants/:id/subscription`, `GET/POST plans`, `PATCH plans/:id`,
+  `GET invoices`, `GET stats`, `GET stats/monthly`.
+* **`GET tenants` "Restoranlar" ekranini to'liq to'ldiradi** (dizayndagi
+  birinchi sahifa). Har qatorda: `owner` (restorandagi **eng eski** OWNER —
+  uni ochgan odam), `city`, `_count` (ishlatilgan filial/xodim),
+  `subscription.plan.maxBranches/maxUsers` (limitlar) — ya'ni "1/3 · 6/15"
+  ustuni serverdan to'liq quriladi. Filtrlar: `?search=` (nomi, **egasining
+  ismi yoki telefoni**), `?status=` (obuna), `?planId=` (**joriy** tarif),
+  `?isActive=` (bloklanganlar — obuna holatidan **alohida**).
+* **`?planId=` joriy obuna boʻyicha filtrlaydi, tarix boʻyicha emas.**
+  Avval `subscriptions: { some: { planId } }` edi — tarifi almashgan restoran
+  eski tarif ostida ham chiqib, roʻyxatdagi "Tarif" ustuniga zid boʻlardi.
+  Prisma `some` ichida "eng kech tugaydigani" ni ifodalay olmaydi, shuning
+  uchun `tenantIdsWithCurrentPlan()` `DISTINCT ON (tenant_id)` bilan har
+  restorandan bittasini oladi. `meta.total` ham oʻsha `where` dan sanaladi.
+* **`GET tenants` va `GET tenants/:id` bitta `TENANT_CARD` select'idan**
+  foydalanadi — ikkalasi bir xil shakl qaytarishi shart (frontend ikkalasini
+  bitta tipga soladi). Bitta restoran sahifasi ustiga faqat `branches` ni
+  qoʻshadi. Oldin `:id` da `_count.branches` tushib qolgandi.
+* **Obuna narxi ro'yxatda ikki xil ko'rinadi**: `subscription.priceMonthly` —
+  amaldagi narx (kelishilgani bo'lmasa tarifniki), `subscription.plan.priceMonthly`
+  — tarifning ro'yxat narxi, `isNegotiated` — chegirma bormi.
+  `GET /subscription/me` dagi qoidaning aynan o'zi, bir joyda
+  (`describeSubscription`).
 * `GET /subscription/me` — **B qatlam**: OWNER/MANAGER o'z obunasini ko'radi
   (tarif, tugash sanasi, `daysLeft`, `usage` va `limits`). `@AllowExpired()` —
   obuna tugaganda ham ochiq bo'lishi shart, aks holda foydalanuvchi 402 dan
@@ -289,6 +533,25 @@ To'liq reja: **`docs/ROADMAP.md`** (git'ga tushmaydi, `.gitignore` da).
   ichida. Parol tranzaksiyadan **tashqarida** hashlanadi. Filial bu yerda
   ochilmaydi: u OWNER ning ishi (Faza 4), aks holda obuna va `maxBranches`
   tekshiruvlari chetlab o'tilardi.
+* **`GET stats` restoranlarni sanaydi, obuna qatorlarini emas.** Uzaytirish
+  **yangi qator** yaratgani uchun bir restoranda bir vaqtda ikkita amaldagi
+  obuna bo'ladi (joriysi + oldindan to'langani) — ularni sanash raqamni ikki
+  barobar ko'tarib yuborardi. Shuning uchun `summarizeActive()` har
+  restorandan faqat **eng kech tugaydiganini** oladi. Natijada
+  `total = active + expired + blocked` har doim to'g'ri.
+* `stats.revenue` da ikki xil pul bor va ular **teng emas**: `mrr` —
+  amaldagi obunalarning oylik narxlari yig'indisi (prognoz), `thisMonth` —
+  shu oyda to'langan hisob-fakturalar (kassa).
+* **`GET stats/monthly` — statistika ekranidagi grafiklar**: oxirgi `months`
+  oy (default 12, maksimum 24) uchun `revenue`, `paidInvoices`, `newTenants`
+  va kumulyativ `totalTenants`. Oy chegarasi **mahalliy vaqtda** olinadi va
+  guruhlash SQL'da emas, service ichida qilinadi: `date_trunc` UTC oyini
+  kesardi va oyning birinchi kunidagi to'lov `stats.revenue.thisMonth` bilan
+  mos kelmay qolardi. Ma'lumotsiz oy ham `0` bilan qaytadi — frontend
+  oylarni o'zi to'ldirmaydi.
+* `GET invoices` — `?tenantId=`, `?status=` va pagination. Obuna
+  o'chirilsa hisob-faktura qoladi (`onDelete: SetNull`), shuning uchun
+  javobdagi `plan` bo'sh bo'lishi mumkin.
 * `SubscriptionGuard` global (4-guard), `@AllowExpired()` bilan istisno.
 * `SubscriptionCron` — har kuni 03:00 da muddati o'tganlarni `EXPIRED` qiladi va
   3 kun qolganlarni logga yozadi. ⚠️ Bir nechta instansiyada har birida ishlaydi
@@ -372,13 +635,24 @@ Shundan kelib chiqqan qarorlar Faza 6 uchun:
   `BILL_REQUESTED` ortida haqiqiy buyurtma turishi kerak, ularni Faza 5/7
   dagi order oqimi `TableStatusService.applyOrderEvent(tableId, status, tx)`
   orqali qo'yadi (`tx` — chaqiruvchining tranzaksiyasi).
-  Ochiq buyurtmasi bor stolni qo'lda `FREE` qilib bo'lmaydi.
+  **Ochiq buyurtmasi bor stolni qoʻlda umuman oʻzgartirib boʻlmaydi** —
+  `FREE` ham, `RESERVED` ham. Avval faqat `FREE` toʻsilgandi; `RESERVED`
+  esa stol band ekanini yashirib, zal xaritasi va "hozir band stollar"
+  hisoblagichini yolgʻon koʻrsatardi (2026-10-21).
 * `qrCodeToken` — `randomUUID()`, **serverda** yaratiladi va hech qachon
   o'zgartirilmaydi: u allaqachon stolga yopishtirilgan qog'ozda chop etilgan.
   `GET /tables/:id/qr` PNG qaytaradi (`@BypassTransform()` + `StreamableFile`),
   QR ichida to'liq havola: `<QR_BASE_URL>/<token>`.
 * O'chirish qoidalari: filial va stol — **buyurtma tarixi bo'lmasa**
   (`Order -> Branch/Table` bog'lanishi `Cascade`); zal — **bo'sh bo'lsa**.
+* **Filial oʻchirilganda undagi xodimlar oʻsha tranzaksiyada nofaol qilinadi**
+  (`isActive: false`). Sababi: `User.branchId` `SetNull` boʻladi va xodim
+  "filialsiz" holatda qolardi. Yozuvi va ish tarixi saqlanadi, lekin login
+  qila olmaydi (`JwtStrategy` ham, `refresh` ham `isActive` ni tekshiradi).
+  Javob: `{ id, deactivatedUsers }`, xabar nechta xodim nofaol boʻlganini
+  aytadi. Taqiqlash emas, nofaol qilish tanlandi: xodimni boshqa filialga
+  oʻtkazish endpointi hali yoʻq (Faza 10), taqiqlansa filial umuman
+  oʻchmay qolardi.
 * Migration `Table.status` ni `DROP COLUMN` bilan emas, `ALTER COLUMN ... USING`
   bilan o'tkazadi — Prisma avtomatik yaratgan variant ma'lumotni yo'qotardi.
 * `@@unique([branchId, name])` zalda, `@@unique([hallId, tableNumber])` stolda:
@@ -432,13 +706,104 @@ Shundan kelib chiqqan qarorlar Faza 6 uchun:
   qo'shimcha taom, begona sessiya, stop-list, hisob so'rash, yopilgan
   buyurtma va 429 limiti.
 
+### Tayyor (Faza 6) — real-time
+
+* `RealtimeModule` (`src/modules/realtime/`) — Socket.IO gateway. Endpoint
+  yo'q: mijoz `ws://localhost:3000` ga ulanadi (`/socket.io` yo'li, `/api/v1`
+  prefiksi socket'ga tegmaydi).
+* **Handshake'da autentifikatsiya**: brauzerning WebSocket API'si maxsus
+  sarlavha yubora olmaydi, shuning uchun token `Authorization` da emas,
+  ulanish paytidagi `auth: { token }` ichida keladi. Tekshiruv **bir marta**
+  o'tadi va natijasi ulanishga yopishib qoladi.
+* **Guardlar ishlamaydi** — `JwtAuthGuard`/`RolesGuard` HTTP so'roviga
+  bog'langan. Shuning uchun gateway `JwtService.verifyAsync` + bazadan
+  foydalanuvchini o'qish ishini o'zi qiladi (`JwtPayload` da faqat `sub` bor,
+  rol va filial har safar bazadan olinadi — `JwtStrategy` bilan bir xil).
+* **Filial doirasi saqlanadi**: xona nomi `branch:{id}:*`, `branchId` esa
+  `BranchScopeService.resolve()` orqali aniqlanadi — ya'ni HTTP'dagi
+  `where: { branchId }` qoidasining aynan o'zi. MANAGER begona filial so'rasa
+  — rad etiladi, OWNER `branchId` bermasa — rad etiladi.
+* 5 xona (`realtime.constants.ts`): `dashboard` (OWNER/MANAGER/CASHIER),
+  `kitchen` (KITCHEN), `waiters` (WAITER) + `user:{id}`, `guest:{sessionId}`.
+  Mehmon tokensiz ulanadi — faqat brauzer UUID'si bilan, xuddi HTTP'dagi
+  `X-Guest-Session` kabi.
+* 3 hodisa ishlaydi: `order.created`, `order.item.added`,
+  `order.bill.requested`. `order.status.changed`, `payment.completed` va
+  `stock.low` — Faza 7/8/9 da, ularni chiqaradigan kod hali yo'q.
+* **Hodisa tranzaksiyadan keyin chiqadi**: u bekor bo'lsa oshxona bo'lmagan
+  buyurtmani ko'rmasligi kerak. Yuborish `await` qilinmaydi — mehmonning
+  HTTP javobi real-time'ni kutmaydi.
+* **Yuklamada ichki maydon yo'q**: hodisa bilan mehmonga HTTP'da ketgan
+  shaklning o'zi yuboriladi (`guestSessionId`, `branchId` yo'q). `branchId`
+  faqat xonani tanlash uchun ishlatiladi.
+* `RedisIoAdapter` — Socket.IO xonalarni protsess xotirasida saqlaydi, ya'ni
+  ikki instansiya bir-birining xonasini ko'rmaydi. Redis adapter boshidan
+  qo'yilgan: kod yozilgandan keyin transportni almashtirish qimmat.
+  Socket.IO o'z CORS'ini talab qiladi — `app.enableCors()` unga tegmaydi.
+* Faza 5 ga o'zgarish minimal: `GuestOrderService` ning 3 metodi oxirida
+  bittadan `RealtimeService` chaqiruvi. Boshqa mantiq tegilmagan.
+* Sxemaga o'zgarish **yo'q** — yangi migration kerak emas.
+* **Avtomatik test: 41/41 o'tdi** — 4 rolning ulanishi, 6 xil rad etilish,
+  3 hodisaning to'g'ri xonalarga borishi, begona mehmonning olmasligi,
+  oshxonaga hisob xabarining bormasligi, yuklamada ichki maydon yo'qligi.
+
+### Tayyor (Faza 6) — push va fon navbati
+
+* `NotificationModule` (`src/modules/notification/`) — 2 endpoint:
+  `POST /devices` (ilova ishga tushganda FCM tokenini yuboradi) va
+  `DELETE /devices` (chiqishda). `@Roles` yo'q: push har qanday xodimga
+  kerak bo'lishi mumkin, kimga nima borishini **hodisa** hal qiladi.
+* **Ikki kanal bir vaqtda**: WebSocket — ilova **ochiq** bo'lganlarga,
+  push — **yopiq** bo'lganlarga. Biri ikkinchisining o'rnini bosmaydi,
+  shuning uchun `GuestOrderService` ikkalasini yonma-yon chaqiradi.
+* **BullMQ** (`push` navbati, Socket.IO bilan bir xil Redis'da) — FCM
+  tashqi servis, u sekin bo'lsa mehmonning HTTP javobi kutib turmasligi
+  kerak. Navbatga yozish ham `await` qilinmaydi: Redis ishlamay qolsa
+  buyurtma baribir qabul qilinadi (push — qulaylik, baza — haqiqat).
+  3 marta qayta urinish, eksponensial kutish (2s/4s/8s).
+* **Ishda token ro'yxati yo'q**, faqat "qaysi filialdagi qaysi rol".
+  Qurilmalar yuborish paytida tanlanadi — ish navbatda turganda xodim
+  smenani tugatgan yoki yangi planshet ulangan bo'lishi mumkin.
+* Kim oladi: `order.created` va `order.item.added` — KITCHEN + WAITER;
+  `order.bill.requested` — WAITER + CASHIER (oshxonaga hisob kerak emas).
+  Filial doirasi bu yerda ham amal qiladi: `where: { user: { branchId } }`.
+* **O'lik tokenlar tozalanadi**: FCM "bu token endi mavjud emas" desa
+  qurilma `isActive: false` bo'ladi, aks holda har safar behuda urinardik.
+  `invalid-argument` kodi esa ikki ma'noli (token buzuq **yoki** xabar
+  noto'g'ri) — shuning uchun matn ham tekshiriladi, bitta noto'g'ri xabar
+  butun filialning qurilmalarini o'chirib yubormasligi uchun.
+* Firebase sozlanmagan bo'lsa ilova **baribir ko'tariladi** (ogohlantirish
+  logga yoziladi) — kalit yo'qligi uchun restoran to'xtab qolmasin.
+* Sxemaga qo'shilgani: `DeviceToken` modeli va `DevicePlatform` enumi
+  (migration `add_device_tokens`).
+* **Avtomatik test: 42/42 o'tdi** — DTO validatsiyasi, upsert bilan token
+  egasining almashishi, buyurtma -> oshxona+ofitsiant, hisob -> ofitsiant+
+  kassir, menejerga bormasligi, **begona filial xodimiga bormasligi**,
+  o'chirilgan qurilmaga bormasligi, `DELETE /devices` ning idempotentligi.
+  Haqiqiy FCM bilan sinaldi (soxta tokenlar Google tomonidan rad etildi,
+  ya'ni service account kaliti ishlayotgani ham tasdiqlandi).
+
 ### Hali yo'q
 
 * Ofitsiant/kassir buyurtmasi (POS), to'lov, ombor, xodim boshqaruvi —
   hali yo'q. Mijozning QR buyurtmasi esa ishlaydi (Faza 5).
-* Ombor, davomat, obuna va push uchun **sxemada model ham yo'q** — ular
+* Ombor va davomat uchun **sxemada model ham yo'q** — ular
   `ROADMAP.md` ning 2-bo'limida ta'riflangan.
-* Redis env o'zgaruvchilari bor, lekin paket o'rnatilmagan (Faza 6).
+* `Notification` modeli (bildirishnoma tarixi, "o'qilgan/o'qilmagan")
+  hali yo'q — hozir xabar faqat yetkaziladi, saqlanmaydi.
+* Push **mobil ilovada sinalmagan**: ilova hali yo'q, shuning uchun
+  haqiqiy qurilma tokeni ham yo'q. Server tomoni to'liq ishlaydi
+  (FCM kaliti tekshirildi), yetishmayotgani — tokenni yuboradigan mijoz.
+* **UI dizayni roadmapda yo'q 6 ta ishni ko'rsatdi** (`Smart Resto — rollar
+  bo'yicha ekranlar` hujjati): taom **variantlari** (Oddiy/Katta) va
+  **qo'shimchalari** (+Qazi), **stolga ofitsiant biriktirish** ("Mening
+  stollarim", "ofitsiant Aziz R. ga xabar boradi"), **bron**, **xizmat haqi
+  10%**, **ofitsiantni chaqirish** tugmasi, **olib ketish** buyurtmasi
+  (`Order.tableId` hozir nullable emas). Yana: `Table.seats`,
+  `Order.guestCount`, `User.lastLoginAt`.
+* `GET /menu` uchun Redis cache — Faza 3 dan qolgan qarz (o'lchovlar
+  yuqorida). Redis endi bor, lekin cache'ni tozalash mahsulot/kategoriya/
+  stop-list servislariga tegadi, shuning uchun alohida ish sifatida qoldi.
 * Birorta `.spec.ts` yozilmagan, `test/jest-e2e.json` ham yo'q (Faza 12).
 * `app.controller.ts` / `app.service.ts` — NestJS shabloni ("Hello World").
 * `tsconfig.json` da strict rejim **o'chirilgan** (`strictNullChecks: false`,
