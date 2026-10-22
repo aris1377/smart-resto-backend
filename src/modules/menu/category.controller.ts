@@ -60,9 +60,14 @@ export class CategoryController {
     @CurrentUser() user: AuthUser,
     @Param('id', ParseIntPipe) id: number,
   ) {
+    const result = await this.categoryService.remove(user, id);
+
     return {
-      message: 'Kategoriya oʻchirildi.',
-      data: await this.categoryService.remove(user, id),
+      message:
+        result.removedProducts > 0
+          ? `Kategoriya oʻchirildi. Menyudan olib qoʻyilgan ${result.removedProducts} ta taom ham oʻchdi.`
+          : 'Kategoriya oʻchirildi.',
+      data: result,
     };
   }
 }

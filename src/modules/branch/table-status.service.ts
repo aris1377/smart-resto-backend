@@ -49,12 +49,12 @@ export class TableStatusService {
       );
     }
 
-    // Ochiq buyurtmasi bor stolni "bo'sh" deb belgilash mumkin emas:
-    // mijoz hali hisobni to'lamagan, QR oqimi esa bo'sh stolga yangi
-    // buyurtma ochib yuborardi
-    if (status === TableStatus.FREE) {
-      await this.assertNoOpenOrder(tableId);
-    }
+    // Ochiq buyurtmasi bor stolni qoʻlda **umuman** oʻzgartirib boʻlmaydi.
+    // `FREE` — mijoz hali hisobni toʻlamagan, QR oqimi esa boʻsh stolga
+    // yangi buyurtma ochib yuborardi. `RESERVED` — stol aslida band, lekin
+    // zal xaritasi va "hozir band stollar" hisoblagichi uni bosh deb
+    // koʻrsatib, ofitsiant oʻsha stolga mehmon oʻtqazib yuborardi.
+    await this.assertNoOpenOrder(tableId);
 
     return this.prisma.table.update({
       where: { id: tableId },
