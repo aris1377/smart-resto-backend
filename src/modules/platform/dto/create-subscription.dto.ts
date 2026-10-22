@@ -1,4 +1,5 @@
-import { IsDecimal, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsNonNegativeDecimal } from '../../../common/decorators/is-non-negative-decimal.decorator';
 
 export class CreateSubscriptionDto {
   @IsInt()
@@ -16,9 +17,6 @@ export class CreateSubscriptionDto {
    * Yuborilmasa: o'sha tarifdagi oldingi kelishuv, u ham bo'lmasa tarif narxi.
    */
   @IsOptional()
-  @IsDecimal(
-    { decimal_digits: '0,2' },
-    { message: 'Narx matn koʻrinishida boʻlsin, masalan "100000".' },
-  )
+  @IsNonNegativeDecimal('Narx manfiy boʻlmagan matn boʻlsin, masalan "100000".')
   priceMonthly?: string;
 }

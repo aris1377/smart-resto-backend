@@ -1,7 +1,6 @@
 import { Unit } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
-  IsDecimal,
   IsEnum,
   IsInt,
   IsOptional,
@@ -10,6 +9,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { IsNonNegativeDecimal } from '../../../common/decorators/is-non-negative-decimal.decorator';
 
 export class CreateProductDto {
   /** Mahsulot filialga emas, kategoriyaga bog'lanadi; filial shundan chiqadi */
@@ -29,12 +29,8 @@ export class CreateProductDto {
   description?: string;
 
   /** Pul — matn, Decimal bo'lib saqlanadi (yaxlitlash xatosi bo'lmasin) */
-  @IsDecimal(
-    { decimal_digits: '0,2' },
-    {
-      message:
-        'Narx matn koʻrinishida boʻlsin, masalan "25000" yoki "25000.50".',
-    },
+  @IsNonNegativeDecimal(
+    'Narx manfiy boʻlmagan matn boʻlsin, masalan "25000" yoki "25000.50".',
   )
   price: string;
 
@@ -44,6 +40,8 @@ export class CreateProductDto {
 
   /** O'lchov hajmi: 0.5 kg, 200 gramm va h.k. */
   @IsOptional()
-  @IsDecimal({ decimal_digits: '0,2' })
+  @IsNonNegativeDecimal(
+    'Oʻlchov hajmi manfiy boʻlmagan matn boʻlsin, masalan "0.5".',
+  )
   unitValue?: string;
 }

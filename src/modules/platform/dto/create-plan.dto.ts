@@ -1,5 +1,4 @@
 import {
-  IsDecimal,
   IsInt,
   IsObject,
   IsOptional,
@@ -9,6 +8,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { IsNonNegativeDecimal } from '../../../common/decorators/is-non-negative-decimal.decorator';
 
 export class CreatePlanDto {
   @IsString()
@@ -20,12 +20,8 @@ export class CreatePlanDto {
    * Pul matn koʻrinishida qabul qilinadi va Decimal boʻlib saqlanadi.
    * JS `number` ishlatilmaydi — yaxlitlash xatosi pulga tegmasligi kerak.
    */
-  @IsDecimal(
-    { decimal_digits: '0,2' },
-    {
-      message:
-        'Narx matn koʻrinishida boʻlsin, masalan "300000" yoki "300000.50".',
-    },
+  @IsNonNegativeDecimal(
+    'Narx manfiy boʻlmagan matn boʻlsin, masalan "300000" yoki "300000.50".',
   )
   priceMonthly: string;
 
