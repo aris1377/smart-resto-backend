@@ -10,7 +10,7 @@ import { AuthUser } from '../../common/interfaces';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto, LoginPinDto, RefreshTokenDto } from './dto';
 import { HashService } from './hash.service';
-import { AuthTokens, JwtPayload } from './interfaces';
+import { AuthTokens, JwtPayload, MeResponse } from './interfaces';
 
 const MS_IN_DAY = 24 * 60 * 60 * 1000; // 1 day
 
@@ -162,6 +162,38 @@ export class AuthService {
   }
 
   /** `password`/`pinCode` javobga hech qachon chiqmasligining kafolati */
+  /**
+   * `GET /auth/me` — foydalanuvchi ustiga restoran va filial nomi.
+   *
+   * Nomlar `AuthUser` ga qoʻshilmaydi: `req.user` **har bir** soʻrovda
+   * bazadan oʻqiladi, bu ikki join esa faqat shu endpointga kerak.
+   * Yon menyudagi "Demo Restoran" va menejerning filiali shundan chiqadi.
+   */
+  async me(user: AuthUser): Promise<MeResponse> {
+    const [tenant, branch] = await Promise.all([
+      user.tenantId
+        ? this.prisma.tenant.findUnique({
+            where: { id: user.tenantId },
+            select: {
+              id: true,
+              name: true,
+              city: true,
+              logoUrl: true,
+              isActive: true,
+            },
+          })
+        : null,
+      user.branchId
+        ? this.prisma.branch.findUnique({
+            where: { id: user.branchId },
+            select: { id: true, name: true, address: true },
+          })
+        : null,
+    ]);
+
+    return { ...user, tenant, branch };
+  }
+
   private toAuthUser(user: User): AuthUser {
     return {
       id: user.id,

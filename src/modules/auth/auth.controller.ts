@@ -80,6 +80,6 @@ export class AuthController {
   @ApiBearerAuth()
   @Get('me')
   me(@CurrentUser() user: AuthUser) {
-    return user;
+    return this.authService.me(user);
   }
 }
