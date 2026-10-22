@@ -41,6 +41,12 @@ export class CreateTenantDto {
   @MaxLength(120)
   name: string;
 
+  /** Platforma ro'yxatida nom ostida ko'rinadi ("ID 1 · Toshkent") */
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  city?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(500)

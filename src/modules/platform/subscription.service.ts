@@ -20,11 +20,44 @@ export const CURRENT_SUBSCRIPTION = {
     status: true,
     startsAt: true,
     expiresAt: true,
-    plan: { select: { id: true, name: true, priceMonthly: true } },
+    // Shu restoran bilan kelishilgan narx (bo'sh bo'lsa — tarifniki amalda)
+    priceMonthly: true,
+    plan: {
+      select: {
+        id: true,
+        name: true,
+        priceMonthly: true,
+        // Platforma ro'yxatida "1/3 · 6/15" ko'rinishida chiqadi
+        maxBranches: true,
+        maxUsers: true,
+      },
+    },
   },
 } satisfies Prisma.Tenant$subscriptionsArgs;
 
+/** `CURRENT_SUBSCRIPTION` bilan o'qilgan obunaning tipi */
+export type CurrentSubscription = Prisma.SubscriptionGetPayload<{
+  select: typeof CURRENT_SUBSCRIPTION.select;
+}>;
+
 const MS_IN_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * "Hozir amal qilayotgan obuna" sharti.
+ *
+ * Funksiya, konstanta emas: `new Date()` har so'rovda qaytadan olinishi kerak.
+ * Filtr ham, hisoblagichlar ham shuni ishlatadi — ikkisi bir xil javob bersin.
+ */
+export function validSubscriptionNow(): Prisma.SubscriptionWhereInput {
+  return { status: SubscriptionStatus.ACTIVE, expiresAt: { gt: new Date() } };
+}
+
+/** Obuna tugashiga necha kun qolgani; muddati o'tgan bo'lsa 0 */
+export function daysLeftUntil(expiresAt: Date): number {
+  const msLeft = expiresAt.getTime() - Date.now();
+
+  return msLeft > 0 ? Math.ceil(msLeft / MS_IN_DAY) : 0;
+}
 
 /**
  * Oyni to'g'ri qo'shadi: 31-yanvarga 1 oy qo'shilsa JS 3-martga sakraydi,
@@ -169,9 +202,7 @@ export class SubscriptionService {
       subscription.status === SubscriptionStatus.ACTIVE &&
       subscription.expiresAt > now;
 
-    const msLeft = subscription.expiresAt.getTime() - now.getTime();
-    const daysLeft = msLeft > 0 ? Math.ceil(msLeft / MS_IN_DAY) : 0;
-
+    const daysLeft = daysLeftUntil(subscription.expiresAt);
     const { plan, ...rest } = subscription;
 
     return {

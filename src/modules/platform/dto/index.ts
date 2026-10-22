@@ -1,6 +1,9 @@
 export { CreatePlanDto } from './create-plan.dto';
 export { CreateSubscriptionDto } from './create-subscription.dto';
 export { CreateTenantDto } from './create-tenant.dto';
+export { ListInvoicesDto } from './list-invoices.dto';
 export { ListTenantsDto } from './list-tenants.dto';
+export { MonthlyStatsDto } from './monthly-stats.dto';
 export { UpdatePlanDto } from './update-plan.dto';
+export { UpdateTenantDto } from './update-tenant.dto';
 export { UpdateTenantStatusDto } from './update-tenant-status.dto';

@@ -15,8 +15,11 @@ import {
   CreatePlanDto,
   CreateSubscriptionDto,
   CreateTenantDto,
+  ListInvoicesDto,
   ListTenantsDto,
+  MonthlyStatsDto,
   UpdatePlanDto,
+  UpdateTenantDto,
   UpdateTenantStatusDto,
 } from './dto';
 import { PlanService } from './plan.service';
@@ -52,6 +55,17 @@ export class PlatformController {
     return {
       message: 'Restoran yaratildi.',
       data: await this.platformService.createTenant(dto),
+    };
+  }
+
+  @Patch('tenants/:id')
+  async updateTenant(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateTenantDto,
+  ) {
+    return {
+      message: 'Restoran yangilandi.',
+      data: await this.platformService.updateTenant(id, dto),
     };
   }
 
@@ -103,8 +117,20 @@ export class PlatformController {
     };
   }
 
+  /** Yon menyudagi "Hisob-fakturalar" bo'limi */
+  @Get('invoices')
+  listInvoices(@Query() query: ListInvoicesDto) {
+    return this.platformService.listInvoices(query);
+  }
+
   @Get('stats')
   getStats() {
     return this.platformService.getStats();
+  }
+
+  /** Statistika ekranidagi grafiklar — oylik tushum va restoranlar oʻsishi */
+  @Get('stats/monthly')
+  getMonthlyStats(@Query() query: MonthlyStatsDto) {
+    return this.platformService.getMonthlyStats(query);
   }
 }
