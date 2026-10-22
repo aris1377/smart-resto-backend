@@ -4,8 +4,27 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthUser } from '../interfaces';
+
+/**
+ * "Bu foydalanuvchi filialga biriktirilganmi?" — qaror **roldan** boshlanadi,
+ * `branchId` bor-yoʻqligidan emas.
+ *
+ * Sabab: sxemada `User.branchId` filial oʻchganda `SetNull` boʻladi. Agar
+ * doira faqat `branchId` ga qarab tanlansa, filiali oʻchirilgan menejer
+ * OWNER kabi qabul qilinib, restoranning **boshqa filiallariga** kirib
+ * qolardi (oʻqish ham, yozish ham). Filialsiz ishlash huquqi faqat
+ * OWNER'da.
+ */
+export function assertBranchBound(user: AuthUser): void {
+  if (user.role !== Role.OWNER && !user.branchId) {
+    throw new ForbiddenException(
+      'Sizga filial biriktirilmagan. Restoran egasiga murojaat qiling.',
+    );
+  }
+}
 
 /**
  * "Bu soʻrov qaysi filial haqida?" degan savolga yagona javob beradi.
@@ -28,7 +47,15 @@ export class BranchScopeService {
    * @param requestedBranchId  `?branchId=` yoki body'dagi qiymat (ixtiyoriy)
    */
   async resolve(user: AuthUser, requestedBranchId?: number): Promise<number> {
-    // 1. Filialga biriktirilgan xodim — tokendagi filialdan chiqa olmaydi
+    // 1. Tenantga bogʻlanmagan (SUPER_ADMIN) — bu endpointlar unga emas
+    if (!user.tenantId) {
+      throw new ForbiddenException('Foydalanuvchi restoranga bogʻlanmagan.');
+    }
+
+    // 2. Rol filialga biriktirilgan boʻlsa, filiali ham boʻlishi shart
+    assertBranchBound(user);
+
+    // 3. Filialga biriktirilgan xodim — tokendagi filialdan chiqa olmaydi
     if (user.branchId) {
       if (requestedBranchId && requestedBranchId !== user.branchId) {
         throw new ForbiddenException(
@@ -39,12 +66,7 @@ export class BranchScopeService {
       return user.branchId;
     }
 
-    // 2. Tenantga bogʻlanmagan (SUPER_ADMIN) — bu endpointlar unga emas
-    if (!user.tenantId) {
-      throw new ForbiddenException('Foydalanuvchi restoranga bogʻlanmagan.');
-    }
-
-    // 3. OWNER — qaysi filial ekanini oʻzi aytishi kerak
+    // 4. OWNER — qaysi filial ekanini oʻzi aytishi kerak
     if (!requestedBranchId) {
       throw new BadRequestException(
         'branchId koʻrsatilishi kerak: sizda bir nechta filial boʻlishi mumkin.',
@@ -73,6 +95,12 @@ export class BranchScopeService {
    * Shuning uchun OWNER dan `branchId` soʻralmaydi.
    */
   async assertAccess(user: AuthUser, branchId: number): Promise<void> {
+    if (!user.tenantId) {
+      throw new ForbiddenException('Foydalanuvchi restoranga bogʻlanmagan.');
+    }
+
+    assertBranchBound(user);
+
     if (user.branchId) {
       if (user.branchId !== branchId) {
         // Begona filialdagi yozuv "yoʻq" deb koʻrsatiladi
@@ -80,10 +108,6 @@ export class BranchScopeService {
       }
 
       return;
-    }
-
-    if (!user.tenantId) {
-      throw new ForbiddenException('Foydalanuvchi restoranga bogʻlanmagan.');
     }
 
     const branch = await this.prisma.branch.findFirst({

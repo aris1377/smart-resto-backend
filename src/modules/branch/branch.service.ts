@@ -7,6 +7,7 @@ import {
 import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/interfaces';
+import { assertBranchBound } from '../../common/services/branch-scope.service';
 import { SubscriptionService } from '../platform/subscription.service';
 import { CreateBranchDto, UpdateBranchDto } from './dto';
 
@@ -43,6 +44,8 @@ export class BranchService {
    */
   async list(user: AuthUser) {
     const tenantId = this.requireTenant(user);
+    // Filiali oʻchirilgan menejer butun restoranni koʻrib qolmasin
+    assertBranchBound(user);
 
     return this.prisma.branch.findMany({
       where: {
@@ -123,9 +126,23 @@ export class BranchService {
       );
     }
 
-    await this.prisma.branch.delete({ where: { id } });
+    // Filial oʻchganda xodimning `branchId` si `SetNull` boʻladi (sxema).
+    // Filialsiz qolgan xodim tizimda sangʻib yurmasligi kerak, shuning uchun
+    // u **oʻsha tranzaksiyada** nofaol qilinadi: yozuvi va ish tarixi saqlanadi,
+    // lekin login qila olmaydi (`JwtStrategy` ham, `refresh` ham `isActive` ni
+    // tekshiradi). OWNER bunga tushmaydi — uning `branchId` si allaqachon null.
+    const deactivatedUsers = await this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.user.updateMany({
+        where: { branchId: id, isActive: true },
+        data: { isActive: false },
+      });
 
-    return { id };
+      await tx.branch.delete({ where: { id } });
+
+      return count;
+    });
+
+    return { id, deactivatedUsers };
   }
 
   /**
@@ -135,6 +152,7 @@ export class BranchService {
    */
   private async findInTenantOrFail(user: AuthUser, id: number) {
     const tenantId = this.requireTenant(user);
+    assertBranchBound(user);
 
     // Menejer o'z filialidan boshqasiga umuman kira olmaydi
     if (user.branchId && user.branchId !== id) {

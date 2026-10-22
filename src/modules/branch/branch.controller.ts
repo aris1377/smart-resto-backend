@@ -63,9 +63,14 @@ export class BranchController {
     @CurrentUser() user: AuthUser,
     @Param('id', ParseIntPipe) id: number,
   ) {
+    const result = await this.branchService.remove(user, id);
+
     return {
-      message: 'Filial oʻchirildi.',
-      data: await this.branchService.remove(user, id),
+      message:
+        result.deactivatedUsers > 0
+          ? `Filial oʻchirildi. ${result.deactivatedUsers} ta xodim nofaol qilindi.`
+          : 'Filial oʻchirildi.',
+      data: result,
     };
   }
 }
