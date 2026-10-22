@@ -42,7 +42,18 @@ export const envValidationSchema = Joi.object({
     .uri()
     .default('http://localhost:3000/api/v1/public/qr'),
 
-  // Faza 6 (Redis) da majburiy bo'ladi, hozircha default bilan
+  // Socket.IO xonalari va BullMQ navbati shu Redis'da (Faza 6).
+  // Redis ishlamasa ilova ko'tarilmaydi.
   REDIS_HOST: Joi.string().default('localhost'),
   REDIS_PORT: Joi.number().port().default(6379),
-});
+
+  // FCM push (Faza 6). Service account kaliti.
+  // Berilmasa push o'chiq rejimda ishlaydi — ilova baribir ko'tariladi,
+  // chunki push qulaylik, WebSocket esa asosiy kanal.
+  FIREBASE_PROJECT_ID: Joi.string().optional(),
+  FIREBASE_CLIENT_EMAIL: Joi.string().email().optional(),
+  FIREBASE_PRIVATE_KEY: Joi.string().optional(),
+})
+  // Yarim sozlangan Firebase — eng yomon holat: push jimgina ishlamaydi.
+  // Shuning uchun uchtasi birga bo'ladi yoki umuman bo'lmaydi.
+  .and('FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY');

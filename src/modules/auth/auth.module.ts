@@ -24,6 +24,7 @@ import { HashService } from './hash.service';
   ],
   controllers: [AuthController],
   providers: [JwtStrategy, AuthService, HashService],
-  exports: [HashService],
+  // `JwtModule` — Faza 6 dagi WebSocket handshake tokenni shu bilan tekshiradi
+  exports: [HashService, JwtModule],
 })
 export class AuthModule {}

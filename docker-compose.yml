@@ -1,6 +1,22 @@
 # Lokal ishlab chiqish uchun yordamchi servislar.
 # Faza 12 da bu yerga app, postgres va redis ham qo'shiladi.
 services:
+  # Faza 6: Socket.IO xonalarini instansiyalar orasida ulashish uchun.
+  # Boshqa loyihaning Redis'i 6379 da ishlab turgan boʻlsa, buni
+  # koʻtarish shart emas — REDIS_HOST/REDIS_PORT shunchaki unga ishora qiladi.
+  redis:
+    image: redis:7-alpine
+    container_name: smart-resto-redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   minio:
     image: minio/minio:latest
     container_name: smart-resto-minio
@@ -21,3 +37,4 @@ services:
 
 volumes:
   minio-data:
+  redis-data:

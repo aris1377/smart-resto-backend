@@ -1,3 +1,4 @@
+import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
@@ -15,8 +16,10 @@ import { AuthModule } from './modules/auth/auth.module';
 import { BranchModule } from './modules/branch/branch.module';
 import { GuestModule } from './modules/guest/guest.module';
 import { MenuModule } from './modules/menu/menu.module';
+import { NotificationModule } from './modules/notification/notification.module';
 import { SubscriptionGuard } from './modules/platform/guards/subscription.guard';
 import { PlatformModule } from './modules/platform/platform.module';
+import { RealtimeModule } from './modules/realtime/realtime.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { PrismaModule } from './prisma/prisma.module';
 
@@ -37,6 +40,20 @@ import { PrismaModule } from './prisma/prisma.module';
         },
       ],
     }),
+    // BullMQ fon navbati (Faza 6): push shu orqali yuboriladi.
+    // Redis Socket.IO adapteri bilan bir xil — alohida server kerak emas.
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        connection: {
+          host: config.getOrThrow<string>('REDIS_HOST'),
+          port: config.getOrThrow<number>('REDIS_PORT'),
+          // BullMQ bloklovchi buyruqlar ishlatadi: ioredis'ning standart
+          // qayta urinish chegarasi ular bilan to'qnashadi
+          maxRetriesPerRequest: null,
+        },
+      }),
+    }),
     // Obuna muddatini har kuni tekshiruvchi cron uchun
     ScheduleModule.forRoot(),
     PrismaModule,
@@ -46,6 +63,8 @@ import { PrismaModule } from './prisma/prisma.module';
     PlatformModule,
     BranchModule,
     MenuModule,
+    RealtimeModule,
+    NotificationModule,
     GuestModule,
   ],
   controllers: [AppController],

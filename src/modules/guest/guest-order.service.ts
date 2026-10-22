@@ -7,6 +7,8 @@ import {
 import { Prisma, TableStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TableStatusService } from '../branch/table-status.service';
+import { PushService } from '../notification/push.service';
+import { RealtimeService } from '../realtime/realtime.service';
 import {
   AddOrderItemsDto,
   CreateGuestOrderDto,
@@ -68,6 +70,8 @@ export class GuestOrderService {
     private readonly prisma: PrismaService,
     private readonly guestTables: GuestTableService,
     private readonly tableStatus: TableStatusService,
+    private readonly realtime: RealtimeService,
+    private readonly push: PushService,
   ) {}
 
   /**
@@ -130,7 +134,20 @@ export class GuestOrderService {
       return { orderId: order.id, created: true };
     });
 
-    return { created, order: await this.getOne(orderId, guestSessionId) };
+    const order = await this.getOne(orderId, guestSessionId);
+
+    // Hodisa tranzaksiya yopilgandan keyin chiqadi: u bekor boʻlganda
+    // oshxona boʻlmagan buyurtmani koʻrmasligi kerak
+    // Ikki kanal: WebSocket — ilova ochiq bo'lganlarga, push — yopiqlarga
+    if (created) {
+      this.realtime.orderCreated(branch.id, order, guestSessionId);
+      this.push.orderCreated(branch.id, order);
+    } else {
+      this.realtime.orderItemAdded(branch.id, order, guestSessionId);
+      this.push.orderItemAdded(branch.id, order);
+    }
+
+    return { created, order };
   }
 
   /** Ovqatlanish davomida qo'shimcha buyurtma */
@@ -158,7 +175,11 @@ export class GuestOrderService {
       await this.appendLines(tx, orderId, tableStatus, lines);
     });
 
-    return this.getOne(orderId, guestSessionId);
+    const updated = await this.getOne(orderId, guestSessionId);
+    this.realtime.orderItemAdded(order.branchId, updated, guestSessionId);
+    this.push.orderItemAdded(order.branchId, updated);
+
+    return updated;
   }
 
   /** Buyurtma holati — mijoz sahifasi buni vaqti-vaqti bilan so'raydi */
@@ -195,7 +216,11 @@ export class GuestOrderService {
       }
     });
 
-    return this.getOne(orderId, guestSessionId);
+    const updated = await this.getOne(orderId, guestSessionId);
+    this.realtime.orderBillRequested(order.branchId, updated, guestSessionId);
+    this.push.orderBillRequested(order.branchId, updated);
+
+    return updated;
   }
 
   /**

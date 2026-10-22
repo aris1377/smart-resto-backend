@@ -4,6 +4,7 @@ import { Logger, ValidationPipe, VersioningType } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { RedisIoAdapter } from './modules/realtime/redis-io.adapter';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -32,6 +33,11 @@ async function bootstrap() {
     origin: corsOrigins ? corsOrigins.split(',').map((o) => o.trim()) : true,
     credentials: true,
   });
+
+  // Socket.IO xonalari Redis orqali ulashiladi (Faza 6)
+  const redisIoAdapter = new RedisIoAdapter(app);
+  await redisIoAdapter.connect();
+  app.useWebSocketAdapter(redisIoAdapter);
 
   const port = configService.getOrThrow<number>('PORT');
   const isProduction = configService.get<string>('NODE_ENV') === 'production';
